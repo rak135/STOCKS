@@ -1,0 +1,21 @@
+{
+  "project_path": "C:\\DATA\\PROJECTS\\STOCKS",
+  "csv_folder": "C:\\DATA\\PROJECTS\\STOCKS\\.csv",
+  "output_path": "C:\\DATA\\PROJECTS\\STOCKS\\stock_tax_system.xlsx",
+  "last_calculated_at": "2026-04-24T18:03:02.568173Z",
+  "global_status": "needs_review",
+  "next_action": {
+    "label": "Review checks",
+    "href": "/audit"
+  },
+  "unresolved_checks": [
+    {
+      "id": "check-1",
+      "level": "warn",
+      "message": "SELL TSLA 2020-02-05 qty 9.106052: unmatched 0.000001",
+      "year": null,
+      "sell_id": null,
+      "href": "/audit"
+    }
+  ]
+}

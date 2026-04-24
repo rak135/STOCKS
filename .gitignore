@@ -1,0 +1,14 @@
+.csv/
+cache/
+backups/
+.ui_state.json
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+node_modules/
+dist/
+build/
+temp/
+*.xlsx
+*.xlsm
+*.log

@@ -1,0 +1,1599 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Stock Tax App",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/status": {
+      "get": {
+        "summary": "Get Status",
+        "operationId": "get_status_api_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/import": {
+      "get": {
+        "summary": "Get Import Summary",
+        "operationId": "get_import_summary_api_import_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/years": {
+      "get": {
+        "summary": "Get Years",
+        "operationId": "get_years_api_years_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TaxYear"
+                  },
+                  "type": "array",
+                  "title": "Response Get Years Api Years Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/years/{year}": {
+      "patch": {
+        "summary": "Patch Year",
+        "operationId": "patch_year_api_years__year__patch",
+        "parameters": [
+          {
+            "name": "year",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Year"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/YearPatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaxYear"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sales": {
+      "get": {
+        "summary": "Get Sales",
+        "operationId": "get_sales_api_sales_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SellSummary"
+                  },
+                  "type": "array",
+                  "title": "Response Get Sales Api Sales Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sales/{sell_id}": {
+      "get": {
+        "summary": "Get Sale",
+        "operationId": "get_sale_api_sales__sell_id__get",
+        "parameters": [
+          {
+            "name": "sell_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sell Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Sell"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sales/{sell_id}/review": {
+      "patch": {
+        "summary": "Patch Sale Review",
+        "operationId": "patch_sale_review_api_sales__sell_id__review_patch",
+        "parameters": [
+          {
+            "name": "sell_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sell Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SellReviewPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Sell"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/open-positions": {
+      "get": {
+        "summary": "Get Open Positions",
+        "operationId": "get_open_positions_api_open_positions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/OpenPosition"
+                  },
+                  "type": "array",
+                  "title": "Response Get Open Positions Api Open Positions Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/fx": {
+      "get": {
+        "summary": "Get Fx Years",
+        "operationId": "get_fx_years_api_fx_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FxYear"
+                  },
+                  "type": "array",
+                  "title": "Response Get Fx Years Api Fx Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/audit": {
+      "get": {
+        "summary": "Get Audit Summary",
+        "operationId": "get_audit_summary_api_audit_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings": {
+      "get": {
+        "summary": "Get Settings",
+        "operationId": "get_settings_api_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppSettings"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/recalculate": {
+      "post": {
+        "summary": "Recalculate",
+        "operationId": "recalculate_api_recalculate_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EngineResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AppSettings": {
+        "properties": {
+          "project_folder": {
+            "type": "string",
+            "title": "Project Folder"
+          },
+          "csv_folder": {
+            "type": "string",
+            "title": "Csv Folder"
+          },
+          "output_path": {
+            "type": "string",
+            "title": "Output Path"
+          },
+          "cache_folder": {
+            "type": "string",
+            "title": "Cache Folder"
+          },
+          "default_tax_rate": {
+            "type": "number",
+            "title": "Default Tax Rate"
+          },
+          "default_fx_method": {
+            "type": "string",
+            "enum": [
+              "FX_DAILY_CNB",
+              "FX_UNIFIED_GFR"
+            ],
+            "title": "Default Fx Method"
+          },
+          "default_100k": {
+            "type": "boolean",
+            "title": "Default 100K"
+          },
+          "unmatched_qty_tolerance": {
+            "type": "number",
+            "title": "Unmatched Qty Tolerance"
+          },
+          "position_reconciliation_tolerance": {
+            "type": "number",
+            "title": "Position Reconciliation Tolerance"
+          },
+          "backup_on_recalc": {
+            "type": "boolean",
+            "title": "Backup On Recalc"
+          },
+          "require_confirm_unlock": {
+            "type": "boolean",
+            "title": "Require Confirm Unlock"
+          },
+          "keep_n_snapshots": {
+            "type": "integer",
+            "title": "Keep N Snapshots"
+          },
+          "excel_validation": {
+            "type": "string",
+            "enum": [
+              "strict",
+              "warn",
+              "off"
+            ],
+            "title": "Excel Validation"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "project_folder",
+          "csv_folder",
+          "output_path",
+          "cache_folder",
+          "default_tax_rate",
+          "default_fx_method",
+          "default_100k",
+          "unmatched_qty_tolerance",
+          "position_reconciliation_tolerance",
+          "backup_on_recalc",
+          "require_confirm_unlock",
+          "keep_n_snapshots",
+          "excel_validation"
+        ],
+        "title": "AppSettings"
+      },
+      "AppStatus": {
+        "properties": {
+          "project_path": {
+            "type": "string",
+            "title": "Project Path"
+          },
+          "csv_folder": {
+            "type": "string",
+            "title": "Csv Folder"
+          },
+          "output_path": {
+            "type": "string",
+            "title": "Output Path"
+          },
+          "last_calculated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Calculated At"
+          },
+          "global_status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "needs_review",
+              "blocked"
+            ],
+            "title": "Global Status"
+          },
+          "next_action": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NextAction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unresolved_checks": {
+            "items": {
+              "$ref": "#/components/schemas/Check"
+            },
+            "type": "array",
+            "title": "Unresolved Checks"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "project_path",
+          "csv_folder",
+          "output_path",
+          "global_status"
+        ],
+        "title": "AppStatus"
+      },
+      "AuditSummary": {
+        "properties": {
+          "year_rows": {
+            "items": {
+              "$ref": "#/components/schemas/TaxYear"
+            },
+            "type": "array",
+            "title": "Year Rows"
+          },
+          "trace_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Trace Counts"
+          },
+          "locked_snapshots": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Locked Snapshots"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "year_rows",
+          "trace_counts",
+          "locked_snapshots"
+        ],
+        "title": "AuditSummary"
+      },
+      "Check": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "error",
+              "warn",
+              "info"
+            ],
+            "title": "Level"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          },
+          "sell_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sell Id"
+          },
+          "href": {
+            "type": "string",
+            "title": "Href",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "level",
+          "message"
+        ],
+        "title": "Check"
+      },
+      "EngineResult": {
+        "properties": {
+          "app_status": {
+            "$ref": "#/components/schemas/AppStatus"
+          },
+          "import_summary": {
+            "$ref": "#/components/schemas/ImportSummary"
+          },
+          "tax_years": {
+            "items": {
+              "$ref": "#/components/schemas/TaxYear"
+            },
+            "type": "array",
+            "title": "Tax Years"
+          },
+          "unresolved_checks": {
+            "items": {
+              "$ref": "#/components/schemas/Check"
+            },
+            "type": "array",
+            "title": "Unresolved Checks"
+          },
+          "sales": {
+            "items": {
+              "$ref": "#/components/schemas/Sell"
+            },
+            "type": "array",
+            "title": "Sales"
+          },
+          "open_positions": {
+            "items": {
+              "$ref": "#/components/schemas/OpenPosition"
+            },
+            "type": "array",
+            "title": "Open Positions"
+          },
+          "fx_years": {
+            "items": {
+              "$ref": "#/components/schemas/FxYear"
+            },
+            "type": "array",
+            "title": "Fx Years"
+          },
+          "audit_summary": {
+            "$ref": "#/components/schemas/AuditSummary"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/AppSettings"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "app_status",
+          "import_summary",
+          "tax_years",
+          "unresolved_checks",
+          "sales",
+          "open_positions",
+          "fx_years",
+          "audit_summary",
+          "settings"
+        ],
+        "title": "EngineResult",
+        "description": "Everything the API needs, in one object."
+      },
+      "FxYear": {
+        "properties": {
+          "year": {
+            "type": "integer",
+            "title": "Year"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "FX_DAILY_CNB",
+              "FX_UNIFIED_GFR"
+            ],
+            "title": "Method"
+          },
+          "unified_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unified Rate"
+          },
+          "daily_cached": {
+            "type": "integer",
+            "title": "Daily Cached",
+            "default": 0
+          },
+          "daily_expected": {
+            "type": "integer",
+            "title": "Daily Expected",
+            "default": 0
+          },
+          "missing_dates": {
+            "items": {
+              "type": "string",
+              "format": "date"
+            },
+            "type": "array",
+            "title": "Missing Dates"
+          },
+          "source_label": {
+            "type": "string",
+            "title": "Source Label"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          },
+          "verified_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verified At"
+          },
+          "manual_override": {
+            "type": "boolean",
+            "title": "Manual Override",
+            "default": false
+          },
+          "locked": {
+            "type": "boolean",
+            "title": "Locked"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "year",
+          "method",
+          "source_label",
+          "locked"
+        ],
+        "title": "FxYear"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ImportFile": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "broker": {
+            "type": "string",
+            "title": "Broker"
+          },
+          "account": {
+            "type": "string",
+            "title": "Account",
+            "default": ""
+          },
+          "account_currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Currency"
+          },
+          "total_rows": {
+            "type": "integer",
+            "title": "Total Rows"
+          },
+          "trade_rows": {
+            "type": "integer",
+            "title": "Trade Rows"
+          },
+          "ignored_rows": {
+            "type": "integer",
+            "title": "Ignored Rows"
+          },
+          "position_rows": {
+            "type": "integer",
+            "title": "Position Rows"
+          },
+          "min_trade_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Trade Date"
+          },
+          "max_trade_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Trade Date"
+          },
+          "unique_symbols": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unique Symbols"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "warnings",
+              "error"
+            ],
+            "title": "Status"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "broker",
+          "total_rows",
+          "trade_rows",
+          "ignored_rows",
+          "position_rows",
+          "status"
+        ],
+        "title": "ImportFile"
+      },
+      "ImportSummary": {
+        "properties": {
+          "folder": {
+            "type": "string",
+            "title": "Folder"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/ImportFile"
+            },
+            "type": "array",
+            "title": "Files"
+          },
+          "total_trade_rows": {
+            "type": "integer",
+            "title": "Total Trade Rows"
+          },
+          "total_ignored_rows": {
+            "type": "integer",
+            "title": "Total Ignored Rows"
+          },
+          "total_warnings": {
+            "type": "integer",
+            "title": "Total Warnings"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "folder",
+          "files",
+          "total_trade_rows",
+          "total_ignored_rows",
+          "total_warnings"
+        ],
+        "title": "ImportSummary"
+      },
+      "MatchedLot": {
+        "properties": {
+          "lot_id": {
+            "type": "string",
+            "title": "Lot Id"
+          },
+          "buy_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Buy Date"
+          },
+          "broker": {
+            "type": "string",
+            "title": "Broker"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceRef"
+          },
+          "quantity": {
+            "type": "number",
+            "title": "Quantity"
+          },
+          "buy_price_usd": {
+            "type": "number",
+            "title": "Buy Price Usd"
+          },
+          "sell_price_usd": {
+            "type": "number",
+            "title": "Sell Price Usd"
+          },
+          "fx_buy": {
+            "type": "number",
+            "title": "Fx Buy"
+          },
+          "fx_sell": {
+            "type": "number",
+            "title": "Fx Sell"
+          },
+          "cost_basis_czk": {
+            "type": "number",
+            "title": "Cost Basis Czk"
+          },
+          "proceeds_czk": {
+            "type": "number",
+            "title": "Proceeds Czk"
+          },
+          "holding_days": {
+            "type": "integer",
+            "title": "Holding Days"
+          },
+          "time_test_exempt": {
+            "type": "boolean",
+            "title": "Time Test Exempt"
+          },
+          "gain_loss_czk": {
+            "type": "number",
+            "title": "Gain Loss Czk"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "lot_id",
+          "buy_date",
+          "broker",
+          "source",
+          "quantity",
+          "buy_price_usd",
+          "sell_price_usd",
+          "fx_buy",
+          "fx_sell",
+          "cost_basis_czk",
+          "proceeds_czk",
+          "holding_days",
+          "time_test_exempt",
+          "gain_loss_czk"
+        ],
+        "title": "MatchedLot"
+      },
+      "MethodComparison": {
+        "properties": {
+          "FIFO": {
+            "type": "number",
+            "title": "Fifo"
+          },
+          "LIFO": {
+            "type": "number",
+            "title": "Lifo"
+          },
+          "MIN_GAIN": {
+            "type": "number",
+            "title": "Min Gain"
+          },
+          "MAX_GAIN": {
+            "type": "number",
+            "title": "Max Gain"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "FIFO",
+          "LIFO",
+          "MIN_GAIN",
+          "MAX_GAIN"
+        ],
+        "title": "MethodComparison",
+        "description": "Informational only — never shown for locked/filed years."
+      },
+      "NextAction": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "href": {
+            "type": "string",
+            "title": "Href"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "label",
+          "href"
+        ],
+        "title": "NextAction"
+      },
+      "OpenLot": {
+        "properties": {
+          "lot_id": {
+            "type": "string",
+            "title": "Lot Id"
+          },
+          "buy_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Buy Date"
+          },
+          "broker": {
+            "type": "string",
+            "title": "Broker"
+          },
+          "quantity": {
+            "type": "number",
+            "title": "Quantity"
+          },
+          "cost_basis_czk": {
+            "type": "number",
+            "title": "Cost Basis Czk"
+          },
+          "unrealised_pl_czk": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealised Pl Czk"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "lot_id",
+          "buy_date",
+          "broker",
+          "quantity",
+          "cost_basis_czk"
+        ],
+        "title": "OpenLot"
+      },
+      "OpenPosition": {
+        "properties": {
+          "ticker": {
+            "type": "string",
+            "title": "Ticker"
+          },
+          "instrument_id": {
+            "type": "string",
+            "title": "Instrument Id"
+          },
+          "calculated_qty": {
+            "type": "number",
+            "title": "Calculated Qty"
+          },
+          "yahoo_qty": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Yahoo Qty"
+          },
+          "difference": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Difference"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "warn",
+              "error",
+              "unknown"
+            ],
+            "title": "Status"
+          },
+          "lots": {
+            "items": {
+              "$ref": "#/components/schemas/OpenLot"
+            },
+            "type": "array",
+            "title": "Lots"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "ticker",
+          "instrument_id",
+          "calculated_qty",
+          "status"
+        ],
+        "title": "OpenPosition"
+      },
+      "Sell": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "year": {
+            "type": "integer",
+            "title": "Year"
+          },
+          "date": {
+            "type": "string",
+            "format": "date",
+            "title": "Date"
+          },
+          "ticker": {
+            "type": "string",
+            "title": "Ticker"
+          },
+          "instrument_id": {
+            "type": "string",
+            "title": "Instrument Id"
+          },
+          "broker": {
+            "type": "string",
+            "title": "Broker"
+          },
+          "quantity": {
+            "type": "number",
+            "title": "Quantity"
+          },
+          "price_usd": {
+            "type": "number",
+            "title": "Price Usd"
+          },
+          "proceeds_czk": {
+            "type": "number",
+            "title": "Proceeds Czk"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "FIFO",
+              "LIFO",
+              "MIN_GAIN",
+              "MAX_GAIN",
+              "MIXED"
+            ],
+            "title": "Method"
+          },
+          "matched_quantity": {
+            "type": "number",
+            "title": "Matched Quantity"
+          },
+          "unmatched_quantity": {
+            "type": "number",
+            "title": "Unmatched Quantity"
+          },
+          "classification": {
+            "type": "string",
+            "enum": [
+              "taxable",
+              "exempt",
+              "mixed"
+            ],
+            "title": "Classification"
+          },
+          "review_status": {
+            "type": "string",
+            "enum": [
+              "unreviewed",
+              "reviewed",
+              "flagged"
+            ],
+            "title": "Review Status"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceRef"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note",
+            "default": ""
+          },
+          "total_gain_loss_czk": {
+            "type": "number",
+            "title": "Total Gain Loss Czk"
+          },
+          "total_cost_basis_czk": {
+            "type": "number",
+            "title": "Total Cost Basis Czk"
+          },
+          "matched_lots": {
+            "items": {
+              "$ref": "#/components/schemas/MatchedLot"
+            },
+            "type": "array",
+            "title": "Matched Lots"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "year",
+          "date",
+          "ticker",
+          "instrument_id",
+          "broker",
+          "quantity",
+          "price_usd",
+          "proceeds_czk",
+          "method",
+          "matched_quantity",
+          "unmatched_quantity",
+          "classification",
+          "review_status",
+          "source",
+          "total_gain_loss_czk",
+          "total_cost_basis_czk",
+          "matched_lots"
+        ],
+        "title": "Sell",
+        "description": "Full shape returned from GET /api/sales/{id}."
+      },
+      "SellReviewPatch": {
+        "properties": {
+          "review_status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "unreviewed",
+                  "reviewed",
+                  "flagged"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Status"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "title": "SellReviewPatch"
+      },
+      "SellSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "year": {
+            "type": "integer",
+            "title": "Year"
+          },
+          "date": {
+            "type": "string",
+            "format": "date",
+            "title": "Date"
+          },
+          "ticker": {
+            "type": "string",
+            "title": "Ticker"
+          },
+          "instrument_id": {
+            "type": "string",
+            "title": "Instrument Id"
+          },
+          "broker": {
+            "type": "string",
+            "title": "Broker"
+          },
+          "quantity": {
+            "type": "number",
+            "title": "Quantity"
+          },
+          "price_usd": {
+            "type": "number",
+            "title": "Price Usd"
+          },
+          "proceeds_czk": {
+            "type": "number",
+            "title": "Proceeds Czk"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "FIFO",
+              "LIFO",
+              "MIN_GAIN",
+              "MAX_GAIN",
+              "MIXED"
+            ],
+            "title": "Method"
+          },
+          "matched_quantity": {
+            "type": "number",
+            "title": "Matched Quantity"
+          },
+          "unmatched_quantity": {
+            "type": "number",
+            "title": "Unmatched Quantity"
+          },
+          "classification": {
+            "type": "string",
+            "enum": [
+              "taxable",
+              "exempt",
+              "mixed"
+            ],
+            "title": "Classification"
+          },
+          "review_status": {
+            "type": "string",
+            "enum": [
+              "unreviewed",
+              "reviewed",
+              "flagged"
+            ],
+            "title": "Review Status"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "year",
+          "date",
+          "ticker",
+          "instrument_id",
+          "broker",
+          "quantity",
+          "price_usd",
+          "proceeds_czk",
+          "method",
+          "matched_quantity",
+          "unmatched_quantity",
+          "classification",
+          "review_status"
+        ],
+        "title": "SellSummary",
+        "description": "Compact shape returned from GET /api/sales (list)."
+      },
+      "SourceRef": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "title": "File"
+          },
+          "row": {
+            "type": "integer",
+            "title": "Row"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "file",
+          "row"
+        ],
+        "title": "SourceRef",
+        "description": "Points to a row in an input CSV file."
+      },
+      "TaxYear": {
+        "properties": {
+          "year": {
+            "type": "integer",
+            "title": "Year"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "FIFO",
+              "LIFO",
+              "MIN_GAIN",
+              "MAX_GAIN",
+              "MIXED"
+            ],
+            "title": "Method"
+          },
+          "filed_method": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "FIFO",
+                  "LIFO",
+                  "MIN_GAIN",
+                  "MAX_GAIN",
+                  "MIXED"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filed Method"
+          },
+          "fx_method": {
+            "type": "string",
+            "enum": [
+              "FX_DAILY_CNB",
+              "FX_UNIFIED_GFR"
+            ],
+            "title": "Fx Method"
+          },
+          "tax_rate": {
+            "type": "number",
+            "title": "Tax Rate"
+          },
+          "exemption_100k": {
+            "type": "boolean",
+            "title": "Exemption 100K"
+          },
+          "gross_proceeds_czk": {
+            "type": "number",
+            "title": "Gross Proceeds Czk"
+          },
+          "exempt_proceeds_czk": {
+            "type": "number",
+            "title": "Exempt Proceeds Czk"
+          },
+          "taxable_gains_czk": {
+            "type": "number",
+            "title": "Taxable Gains Czk"
+          },
+          "taxable_losses_czk": {
+            "type": "number",
+            "title": "Taxable Losses Czk"
+          },
+          "taxable_base_czk": {
+            "type": "number",
+            "title": "Taxable Base Czk"
+          },
+          "tax_due_czk": {
+            "type": "number",
+            "title": "Tax Due Czk"
+          },
+          "match_line_count": {
+            "type": "integer",
+            "title": "Match Line Count"
+          },
+          "filed": {
+            "type": "boolean",
+            "title": "Filed"
+          },
+          "locked": {
+            "type": "boolean",
+            "title": "Locked"
+          },
+          "show_method_comparison": {
+            "type": "boolean",
+            "title": "Show Method Comparison"
+          },
+          "filed_tax_input_czk": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filed Tax Input Czk"
+          },
+          "reconciliation_status": {
+            "type": "string",
+            "enum": [
+              "not_filed",
+              "reconciled",
+              "needs_attention",
+              "accepted_with_note"
+            ],
+            "title": "Reconciliation Status"
+          },
+          "reconciliation_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reconciliation Note"
+          },
+          "method_comparison": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MethodComparison"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "year",
+          "method",
+          "fx_method",
+          "tax_rate",
+          "exemption_100k",
+          "gross_proceeds_czk",
+          "exempt_proceeds_czk",
+          "taxable_gains_czk",
+          "taxable_losses_czk",
+          "taxable_base_czk",
+          "tax_due_czk",
+          "match_line_count",
+          "filed",
+          "locked",
+          "show_method_comparison",
+          "reconciliation_status"
+        ],
+        "title": "TaxYear"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "YearPatchRequest": {
+        "properties": {
+          "method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method"
+          }
+        },
+        "type": "object",
+        "title": "YearPatchRequest"
+      }
+    }
+  }
+}

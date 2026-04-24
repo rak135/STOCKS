@@ -1,0 +1,1178 @@
+[
+  {
+    "ticker": "ADBE",
+    "instrument_id": "ADBE",
+    "calculated_qty": 4.0,
+    "yahoo_qty": null,
+    "difference": null,
+    "status": "unknown",
+    "lots": [
+      {
+        "lot_id": "L_Trading212.csv#2",
+        "buy_date": "2025-08-11",
+        "broker": "Trading212",
+        "quantity": 2.0,
+        "cost_basis_czk": 14907.5472,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#8",
+        "buy_date": "2025-11-28",
+        "broker": "Revolut",
+        "quantity": 2.0,
+        "cost_basis_czk": 14083.524000000001,
+        "unrealised_pl_czk": null
+      }
+    ]
+  },
+  {
+    "ticker": "AMD",
+    "instrument_id": "AMD",
+    "calculated_qty": 49.0,
+    "yahoo_qty": null,
+    "difference": null,
+    "status": "unknown",
+    "lots": [
+      {
+        "lot_id": "L_Revolut.csv#27",
+        "buy_date": "2024-11-19",
+        "broker": "Revolut",
+        "quantity": 5.0,
+        "cost_basis_czk": 16246.879200000001,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#26",
+        "buy_date": "2024-12-13",
+        "broker": "Revolut",
+        "quantity": 4.0,
+        "cost_basis_czk": 12124.6896,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#25",
+        "buy_date": "2024-12-20",
+        "broker": "Revolut",
+        "quantity": 5.0,
+        "cost_basis_czk": 13991.28,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Lynx.csv#3",
+        "buy_date": "2025-02-06",
+        "broker": "Lynx",
+        "quantity": 6.0,
+        "cost_basis_czk": 14515.7376,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_XTB_USD.csv#5",
+        "buy_date": "2025-02-06",
+        "broker": "XTB",
+        "quantity": 2.0,
+        "cost_basis_czk": 4792.132799999999,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#13",
+        "buy_date": "2025-02-10",
+        "broker": "Trading212",
+        "quantity": 3.0,
+        "cost_basis_czk": 7287.352800000001,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#12",
+        "buy_date": "2025-02-25",
+        "broker": "Trading212",
+        "quantity": 2.0,
+        "cost_basis_czk": 4646.2416,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#11",
+        "buy_date": "2025-02-26",
+        "broker": "Trading212",
+        "quantity": 1.0,
+        "cost_basis_czk": 2307.6144,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_XTB_USD.csv#4",
+        "buy_date": "2025-03-04",
+        "broker": "XTB",
+        "quantity": 3.0,
+        "cost_basis_czk": 6361.336799999999,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#24",
+        "buy_date": "2025-04-04",
+        "broker": "Revolut",
+        "quantity": 2.0,
+        "cost_basis_czk": 3832.0464,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#10",
+        "buy_date": "2025-10-21",
+        "broker": "Trading212",
+        "quantity": 3.0,
+        "cost_basis_czk": 15698.8104,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#9",
+        "buy_date": "2025-11-04",
+        "broker": "Trading212",
+        "quantity": 1.0,
+        "cost_basis_czk": 5459.3448,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#23",
+        "buy_date": "2025-11-17",
+        "broker": "Revolut",
+        "quantity": 4.0,
+        "cost_basis_czk": 21437.4888,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#8",
+        "buy_date": "2025-11-20",
+        "broker": "Trading212",
+        "quantity": 2.0,
+        "cost_basis_czk": 9032.5872,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#22",
+        "buy_date": "2025-11-25",
+        "broker": "Revolut",
+        "quantity": 4.0,
+        "cost_basis_czk": 17242.4616,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#21",
+        "buy_date": "2026-02-04",
+        "broker": "Revolut",
+        "quantity": 2.0,
+        "cost_basis_czk": 9171.36,
+        "unrealised_pl_czk": null
+      }
+    ]
+  },
+  {
+    "ticker": "AMZN",
+    "instrument_id": "AMZN",
+    "calculated_qty": 12.0,
+    "yahoo_qty": null,
+    "difference": null,
+    "status": "unknown",
+    "lots": [
+      {
+        "lot_id": "L_Revolut.csv#52",
+        "buy_date": "2023-05-22",
+        "broker": "Revolut",
+        "quantity": 2.0,
+        "cost_basis_czk": 5125.6238,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#51",
+        "buy_date": "2023-06-07",
+        "broker": "Revolut",
+        "quantity": 1.0,
+        "cost_basis_czk": 2756.4831,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_XTB_CZK.csv#12",
+        "buy_date": "2024-01-29",
+        "broker": "XTB",
+        "quantity": 2.0,
+        "cost_basis_czk": 7498.953600000001,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#50",
+        "buy_date": "2025-08-05",
+        "broker": "Revolut",
+        "quantity": 5.0,
+        "cost_basis_czk": 23623.236,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#49",
+        "buy_date": "2025-10-21",
+        "broker": "Revolut",
+        "quantity": 2.0,
+        "cost_basis_czk": 9729.5016,
+        "unrealised_pl_czk": null
+      }
+    ]
+  },
+  {
+    "ticker": "AVTBF",
+    "instrument_id": "AVTBF",
+    "calculated_qty": 676.9273000000001,
+    "yahoo_qty": null,
+    "difference": null,
+    "status": "unknown",
+    "lots": [
+      {
+        "lot_id": "L_Trading212.csv#17",
+        "buy_date": "2023-07-20",
+        "broker": "Trading212",
+        "quantity": 24.0,
+        "cost_basis_czk": 81.235296,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#18",
+        "buy_date": "2023-07-20",
+        "broker": "Trading212",
+        "quantity": 100.0,
+        "cost_basis_czk": 338.7025,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#19",
+        "buy_date": "2023-07-20",
+        "broker": "Trading212",
+        "quantity": 10.25711,
+        "cost_basis_czk": 34.71830695644001,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#20",
+        "buy_date": "2023-07-20",
+        "broker": "Trading212",
+        "quantity": 1.67388,
+        "cost_basis_czk": 6.320068716000001,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#21",
+        "buy_date": "2023-07-20",
+        "broker": "Trading212",
+        "quantity": 54.06901,
+        "cost_basis_czk": 199.3448702086,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#15",
+        "buy_date": "2023-08-07",
+        "broker": "Trading212",
+        "quantity": 89.7,
+        "cost_basis_czk": 364.77859470000004,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#16",
+        "buy_date": "2023-08-07",
+        "broker": "Trading212",
+        "quantity": 147.2273,
+        "cost_basis_czk": 635.6721239352,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#14",
+        "buy_date": "2024-01-08",
+        "broker": "Trading212",
+        "quantity": 250.0,
+        "cost_basis_czk": 639.6179999999999,
+        "unrealised_pl_czk": null
+      }
+    ]
+  },
+  {
+    "ticker": "CAKE",
+    "instrument_id": "CAKE",
+    "calculated_qty": 70.0,
+    "yahoo_qty": null,
+    "difference": null,
+    "status": "unknown",
+    "lots": [
+      {
+        "lot_id": "L_Revolut.csv#48",
+        "buy_date": "2023-06-07",
+        "broker": "Revolut",
+        "quantity": 8.0,
+        "cost_basis_czk": 5971.6027,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#47",
+        "buy_date": "2023-10-11",
+        "broker": "Revolut",
+        "quantity": 5.0,
+        "cost_basis_czk": 3352.5995,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Lynx.csv#11",
+        "buy_date": "2023-11-15",
+        "broker": "Lynx",
+        "quantity": 20.0,
+        "cost_basis_czk": 14734.114000000003,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#46",
+        "buy_date": "2024-09-19",
+        "broker": "Revolut",
+        "quantity": 3.0,
+        "cost_basis_czk": 2706.3,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#45",
+        "buy_date": "2024-12-09",
+        "broker": "Revolut",
+        "quantity": 14.0,
+        "cost_basis_czk": 15996.852000000003,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#44",
+        "buy_date": "2025-01-13",
+        "broker": "Revolut",
+        "quantity": 10.0,
+        "cost_basis_czk": 10509.408,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#43",
+        "buy_date": "2025-11-03",
+        "broker": "Revolut",
+        "quantity": 10.0,
+        "cost_basis_czk": 10507.224,
+        "unrealised_pl_czk": null
+      }
+    ]
+  },
+  {
+    "ticker": "CELH",
+    "instrument_id": "CELH",
+    "calculated_qty": 69.0,
+    "yahoo_qty": null,
+    "difference": null,
+    "status": "unknown",
+    "lots": [
+      {
+        "lot_id": "L_Lynx.csv#2",
+        "buy_date": "2025-02-26",
+        "broker": "Lynx",
+        "quantity": 25.0,
+        "cost_basis_czk": 15064.14,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#7",
+        "buy_date": "2025-02-26",
+        "broker": "Trading212",
+        "quantity": 15.0,
+        "cost_basis_czk": 9015.552,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#6",
+        "buy_date": "2025-03-03",
+        "broker": "Trading212",
+        "quantity": 5.0,
+        "cost_basis_czk": 2918.916,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#10",
+        "buy_date": "2025-11-07",
+        "broker": "Revolut",
+        "quantity": 10.0,
+        "cost_basis_czk": 9201.192000000001,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#9",
+        "buy_date": "2026-03-27",
+        "broker": "Revolut",
+        "quantity": 14.0,
+        "cost_basis_czk": 10512.04,
+        "unrealised_pl_czk": null
+      }
+    ]
+  },
+  {
+    "ticker": "CRM",
+    "instrument_id": "CRM",
+    "calculated_qty": 6.0,
+    "yahoo_qty": null,
+    "difference": null,
+    "status": "unknown",
+    "lots": [
+      {
+        "lot_id": "L_Revolut.csv#7",
+        "buy_date": "2025-12-03",
+        "broker": "Revolut",
+        "quantity": 4.0,
+        "cost_basis_czk": 20790.8064,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#6",
+        "buy_date": "2026-02-25",
+        "broker": "Revolut",
+        "quantity": 2.0,
+        "cost_basis_czk": 8367.92,
+        "unrealised_pl_czk": null
+      }
+    ]
+  },
+  {
+    "ticker": "EL",
+    "instrument_id": "EL",
+    "calculated_qty": 14.0,
+    "yahoo_qty": null,
+    "difference": null,
+    "status": "unknown",
+    "lots": [
+      {
+        "lot_id": "L_Revolut.csv#30",
+        "buy_date": "2024-11-01",
+        "broker": "Revolut",
+        "quantity": 5.0,
+        "cost_basis_czk": 7840.704000000001,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#29",
+        "buy_date": "2025-04-16",
+        "broker": "Revolut",
+        "quantity": 3.0,
+        "cost_basis_czk": 3446.5704,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#28",
+        "buy_date": "2025-11-06",
+        "broker": "Revolut",
+        "quantity": 6.0,
+        "cost_basis_czk": 11793.6,
+        "unrealised_pl_czk": null
+      }
+    ]
+  },
+  {
+    "ticker": "ELF",
+    "instrument_id": "ELF",
+    "calculated_qty": 46.0,
+    "yahoo_qty": null,
+    "difference": null,
+    "status": "unknown",
+    "lots": [
+      {
+        "lot_id": "L_Lynx.csv#10",
+        "buy_date": "2023-11-07",
+        "broker": "Lynx",
+        "quantity": 9.0,
+        "cost_basis_czk": 20100.05,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_XTB_USD.csv#9",
+        "buy_date": "2024-10-08",
+        "broker": "XTB",
+        "quantity": 4.0,
+        "cost_basis_czk": 9444.2304,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#20",
+        "buy_date": "2025-02-03",
+        "broker": "Revolut",
+        "quantity": 5.0,
+        "cost_basis_czk": 10420.7376,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_XTB_USD.csv#8",
+        "buy_date": "2025-02-10",
+        "broker": "XTB",
+        "quantity": 5.0,
+        "cost_basis_czk": 7861.308,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#19",
+        "buy_date": "2025-03-03",
+        "broker": "Revolut",
+        "quantity": 5.0,
+        "cost_basis_czk": 7298.928000000001,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_XTB_USD.csv#7",
+        "buy_date": "2025-03-12",
+        "broker": "XTB",
+        "quantity": 6.0,
+        "cost_basis_czk": 8733.816,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#18",
+        "buy_date": "2025-04-04",
+        "broker": "Revolut",
+        "quantity": 7.0,
+        "cost_basis_czk": 8281.946399999999,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#17",
+        "buy_date": "2026-04-17",
+        "broker": "Revolut",
+        "quantity": 5.0,
+        "cost_basis_czk": 7718.700000000001,
+        "unrealised_pl_czk": null
+      }
+    ]
+  },
+  {
+    "ticker": "FUBO",
+    "instrument_id": "FUBO",
+    "calculated_qty": 200.0,
+    "yahoo_qty": null,
+    "difference": null,
+    "status": "unknown",
+    "lots": [
+      {
+        "lot_id": "L_Revolut.csv#41",
+        "buy_date": "2023-11-07",
+        "broker": "Revolut",
+        "quantity": 40.0,
+        "cost_basis_czk": 2647.6540999999997,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#40",
+        "buy_date": "2024-01-04",
+        "broker": "Revolut",
+        "quantity": 30.0,
+        "cost_basis_czk": 2060.28,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#39",
+        "buy_date": "2024-03-13",
+        "broker": "Revolut",
+        "quantity": 30.0,
+        "cost_basis_czk": 1159.344,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#38",
+        "buy_date": "2025-11-24",
+        "broker": "Revolut",
+        "quantity": 100.0,
+        "cost_basis_czk": 6799.4472,
+        "unrealised_pl_czk": null
+      }
+    ]
+  },
+  {
+    "ticker": "HNST",
+    "instrument_id": "HNST",
+    "calculated_qty": 226.0,
+    "yahoo_qty": null,
+    "difference": null,
+    "status": "unknown",
+    "lots": [
+      {
+        "lot_id": "L_Trading212.csv#24",
+        "buy_date": "2024-06-26",
+        "broker": "Trading212",
+        "quantity": 29.0,
+        "cost_basis_czk": 1991.6040000000003,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#23",
+        "buy_date": "2024-07-19",
+        "broker": "Trading212",
+        "quantity": 18.0,
+        "cost_basis_czk": 1550.4480000000003,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#22",
+        "buy_date": "2025-08-12",
+        "broker": "Trading212",
+        "quantity": 29.0,
+        "cost_basis_czk": 2482.7711999999997,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#4",
+        "buy_date": "2026-02-26",
+        "broker": "Revolut",
+        "quantity": 100.0,
+        "cost_basis_czk": 6189.92,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#3",
+        "buy_date": "2026-03-27",
+        "broker": "Revolut",
+        "quantity": 50.0,
+        "cost_basis_czk": 3163.82,
+        "unrealised_pl_czk": null
+      }
+    ]
+  },
+  {
+    "ticker": "META",
+    "instrument_id": "META",
+    "calculated_qty": 5.0,
+    "yahoo_qty": null,
+    "difference": null,
+    "status": "unknown",
+    "lots": [
+      {
+        "lot_id": "L_XTB_USD.csv#3",
+        "buy_date": "2025-03-18",
+        "broker": "XTB",
+        "quantity": 1.0,
+        "cost_basis_czk": 12617.1864,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#14",
+        "buy_date": "2025-03-31",
+        "broker": "Revolut",
+        "quantity": 1.0,
+        "cost_basis_czk": 12171.2136,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#13",
+        "buy_date": "2025-04-16",
+        "broker": "Revolut",
+        "quantity": 1.0,
+        "cost_basis_czk": 10948.173599999998,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#12",
+        "buy_date": "2025-08-01",
+        "broker": "Revolut",
+        "quantity": 1.0,
+        "cost_basis_czk": 16456.6584,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#11",
+        "buy_date": "2025-10-31",
+        "broker": "Revolut",
+        "quantity": 1.0,
+        "cost_basis_czk": 14344.730399999999,
+        "unrealised_pl_czk": null
+      }
+    ]
+  },
+  {
+    "ticker": "NKE",
+    "instrument_id": "NKE",
+    "calculated_qty": 43.0,
+    "yahoo_qty": null,
+    "difference": null,
+    "status": "unknown",
+    "lots": [
+      {
+        "lot_id": "L_Lynx.csv#5",
+        "buy_date": "2024-09-04",
+        "broker": "Lynx",
+        "quantity": 10.0,
+        "cost_basis_czk": 18880.856,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_XTB_CZK.csv#3",
+        "buy_date": "2024-09-20",
+        "broker": "XTB",
+        "quantity": 5.0,
+        "cost_basis_czk": 10005.743999999999,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_XTB_USD.csv#6",
+        "buy_date": "2024-10-02",
+        "broker": "XTB",
+        "quantity": 8.0,
+        "cost_basis_czk": 15662.784,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Lynx.csv#4",
+        "buy_date": "2025-01-08",
+        "broker": "Lynx",
+        "quantity": 10.0,
+        "cost_basis_czk": 15665.832000000002,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#2",
+        "buy_date": "2026-04-17",
+        "broker": "Revolut",
+        "quantity": 10.0,
+        "cost_basis_czk": 10142.0,
+        "unrealised_pl_czk": null
+      }
+    ]
+  },
+  {
+    "ticker": "NOW",
+    "instrument_id": "NOW",
+    "calculated_qty": 7.0,
+    "yahoo_qty": null,
+    "difference": null,
+    "status": "unknown",
+    "lots": [
+      {
+        "lot_id": "L_Revolut.csv#5",
+        "buy_date": "2026-02-25",
+        "broker": "Revolut",
+        "quantity": 7.0,
+        "cost_basis_czk": 15901.599999999999,
+        "unrealised_pl_czk": null
+      }
+    ]
+  },
+  {
+    "ticker": "PLNH",
+    "instrument_id": "PLNH",
+    "calculated_qty": 376.0,
+    "yahoo_qty": null,
+    "difference": null,
+    "status": "unknown",
+    "lots": [
+      {
+        "lot_id": "L_Trading212.csv#48",
+        "buy_date": "2021-01-25",
+        "broker": "Trading212",
+        "quantity": 7.0,
+        "cost_basis_czk": 840.7504,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#47",
+        "buy_date": "2021-02-08",
+        "broker": "Trading212",
+        "quantity": 25.0,
+        "cost_basis_czk": 3533.84,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#46",
+        "buy_date": "2021-04-19",
+        "broker": "Trading212",
+        "quantity": 12.0,
+        "cost_basis_czk": 1662.4224,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#45",
+        "buy_date": "2021-05-12",
+        "broker": "Trading212",
+        "quantity": 1.0,
+        "cost_basis_czk": 134.416,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#44",
+        "buy_date": "2021-05-13",
+        "broker": "Trading212",
+        "quantity": 5.0,
+        "cost_basis_czk": 631.972,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#43",
+        "buy_date": "2021-07-26",
+        "broker": "Trading212",
+        "quantity": 8.0,
+        "cost_basis_czk": 1038.9056,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#42",
+        "buy_date": "2021-08-30",
+        "broker": "Trading212",
+        "quantity": 20.0,
+        "cost_basis_czk": 2141.9840000000004,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#41",
+        "buy_date": "2024-04-09",
+        "broker": "Trading212",
+        "quantity": 58.0,
+        "cost_basis_czk": 924.9144000000001,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#39",
+        "buy_date": "2024-09-03",
+        "broker": "Trading212",
+        "quantity": 30.98636,
+        "cost_basis_czk": 431.30261531232003,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#40",
+        "buy_date": "2024-09-03",
+        "broker": "Trading212",
+        "quantity": 69.01364,
+        "cost_basis_czk": 960.7692484416,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#38",
+        "buy_date": "2024-09-12",
+        "broker": "Trading212",
+        "quantity": 140.0,
+        "cost_basis_czk": 1938.8980800000002,
+        "unrealised_pl_czk": null
+      }
+    ]
+  },
+  {
+    "ticker": "PLTR",
+    "instrument_id": "PLTR",
+    "calculated_qty": 20.0,
+    "yahoo_qty": null,
+    "difference": null,
+    "status": "unknown",
+    "lots": [
+      {
+        "lot_id": "L_XTB_CZK.csv#24",
+        "buy_date": "2023-11-01",
+        "broker": "XTB",
+        "quantity": 20.0,
+        "cost_basis_czk": 6529.740000000001,
+        "unrealised_pl_czk": null
+      }
+    ]
+  },
+  {
+    "ticker": "PYPL",
+    "instrument_id": "PYPL",
+    "calculated_qty": 75.0,
+    "yahoo_qty": null,
+    "difference": null,
+    "status": "unknown",
+    "lots": [
+      {
+        "lot_id": "L_Revolut.csv#61",
+        "buy_date": "2023-05-15",
+        "broker": "Revolut",
+        "quantity": 4.0,
+        "cost_basis_czk": 5557.830400000001,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#30",
+        "buy_date": "2023-05-15",
+        "broker": "Trading212",
+        "quantity": 1.547855,
+        "cost_basis_czk": 2144.8346573245003,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#29",
+        "buy_date": "2023-06-07",
+        "broker": "Trading212",
+        "quantity": 1.452145,
+        "cost_basis_czk": 2104.4521643625,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#60",
+        "buy_date": "2023-07-10",
+        "broker": "Revolut",
+        "quantity": 3.0,
+        "cost_basis_czk": 4580.5904,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#59",
+        "buy_date": "2023-08-03",
+        "broker": "Revolut",
+        "quantity": 2.0,
+        "cost_basis_czk": 2918.3940000000002,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#58",
+        "buy_date": "2023-08-18",
+        "broker": "Revolut",
+        "quantity": 2.0,
+        "cost_basis_czk": 2661.2022,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#57",
+        "buy_date": "2023-10-18",
+        "broker": "Revolut",
+        "quantity": 2.0,
+        "cost_basis_czk": 2504.1775000000002,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_XTB_CZK.csv#29",
+        "buy_date": "2023-10-30",
+        "broker": "XTB",
+        "quantity": 8.0,
+        "cost_basis_czk": 9020.813600000001,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_XTB_CZK.csv#28",
+        "buy_date": "2023-10-31",
+        "broker": "XTB",
+        "quantity": 9.0,
+        "cost_basis_czk": 10340.3097,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#56",
+        "buy_date": "2023-11-01",
+        "broker": "Revolut",
+        "quantity": 2.0,
+        "cost_basis_czk": 2316.2808999999997,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_XTB_CZK.csv#27",
+        "buy_date": "2023-11-01",
+        "broker": "XTB",
+        "quantity": 8.0,
+        "cost_basis_czk": 9130.9752,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_XTB_CZK.csv#26",
+        "buy_date": "2023-11-29",
+        "broker": "XTB",
+        "quantity": 3.0,
+        "cost_basis_czk": 3898.5213000000003,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#55",
+        "buy_date": "2024-09-05",
+        "broker": "Revolut",
+        "quantity": 2.0,
+        "cost_basis_czk": 3362.5632,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#27",
+        "buy_date": "2025-11-07",
+        "broker": "Trading212",
+        "quantity": 4.0,
+        "cost_basis_czk": 5721.206399999999,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#54",
+        "buy_date": "2025-11-20",
+        "broker": "Revolut",
+        "quantity": 13.0,
+        "cost_basis_czk": 16573.9392,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#53",
+        "buy_date": "2026-01-30",
+        "broker": "Revolut",
+        "quantity": 10.0,
+        "cost_basis_czk": 11530.199999999997,
+        "unrealised_pl_czk": null
+      }
+    ]
+  },
+  {
+    "ticker": "SHOP",
+    "instrument_id": "SHOP",
+    "calculated_qty": 12.0,
+    "yahoo_qty": null,
+    "difference": null,
+    "status": "unknown",
+    "lots": [
+      {
+        "lot_id": "L_Trading212.csv#34",
+        "buy_date": "2021-07-28",
+        "broker": "Trading212",
+        "quantity": 1.0,
+        "cost_basis_czk": 3334.8176,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#33",
+        "buy_date": "2021-07-29",
+        "broker": "Trading212",
+        "quantity": 2.0,
+        "cost_basis_czk": 6585.21328,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#32",
+        "buy_date": "2021-08-11",
+        "broker": "Trading212",
+        "quantity": 1.0,
+        "cost_basis_czk": 3229.08424,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#37",
+        "buy_date": "2024-08-05",
+        "broker": "Revolut",
+        "quantity": 4.0,
+        "cost_basis_czk": 4708.1472,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_XTB_CZK.csv#30",
+        "buy_date": "2024-08-05",
+        "broker": "XTB",
+        "quantity": 4.0,
+        "cost_basis_czk": 4902.768,
+        "unrealised_pl_czk": null
+      }
+    ]
+  },
+  {
+    "ticker": "SOFI",
+    "instrument_id": "SOFI",
+    "calculated_qty": 224.0,
+    "yahoo_qty": null,
+    "difference": null,
+    "status": "unknown",
+    "lots": [
+      {
+        "lot_id": "L_XTB_CZK.csv#11",
+        "buy_date": "2024-03-14",
+        "broker": "XTB",
+        "quantity": 50.0,
+        "cost_basis_czk": 8345.880000000001,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#36",
+        "buy_date": "2024-10-30",
+        "broker": "Revolut",
+        "quantity": 31.0,
+        "cost_basis_czk": 8161.2696000000005,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#35",
+        "buy_date": "2025-01-31",
+        "broker": "Revolut",
+        "quantity": 20.0,
+        "cost_basis_czk": 7132.9439999999995,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#34",
+        "buy_date": "2025-02-24",
+        "broker": "Revolut",
+        "quantity": 29.0,
+        "cost_basis_czk": 8891.9376,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#33",
+        "buy_date": "2025-02-25",
+        "broker": "Revolut",
+        "quantity": 20.0,
+        "cost_basis_czk": 5996.8272,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#5",
+        "buy_date": "2025-03-04",
+        "broker": "Trading212",
+        "quantity": 9.0,
+        "cost_basis_czk": 2474.6904,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#4",
+        "buy_date": "2025-03-17",
+        "broker": "Trading212",
+        "quantity": 1.0,
+        "cost_basis_czk": 262.5168,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_XTB_USD.csv#2",
+        "buy_date": "2025-04-16",
+        "broker": "XTB",
+        "quantity": 4.0,
+        "cost_basis_czk": 927.7631999999999,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Trading212.csv#3",
+        "buy_date": "2025-11-21",
+        "broker": "Trading212",
+        "quantity": 5.0,
+        "cost_basis_czk": 2708.16,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#32",
+        "buy_date": "2025-12-05",
+        "broker": "Revolut",
+        "quantity": 30.0,
+        "cost_basis_czk": 18149.04,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Revolut.csv#31",
+        "buy_date": "2026-02-17",
+        "broker": "Revolut",
+        "quantity": 25.0,
+        "cost_basis_czk": 10886.919999999998,
+        "unrealised_pl_czk": null
+      }
+    ]
+  },
+  {
+    "ticker": "WYNN",
+    "instrument_id": "WYNN",
+    "calculated_qty": 11.0,
+    "yahoo_qty": null,
+    "difference": null,
+    "status": "unknown",
+    "lots": [
+      {
+        "lot_id": "L_Lynx.csv#7",
+        "buy_date": "2023-11-09",
+        "broker": "Lynx",
+        "quantity": 5.0,
+        "cost_basis_czk": 10297.666500000001,
+        "unrealised_pl_czk": null
+      },
+      {
+        "lot_id": "L_Lynx.csv#6",
+        "buy_date": "2023-11-15",
+        "broker": "Lynx",
+        "quantity": 6.0,
+        "cost_basis_czk": 11903.8937,
+        "unrealised_pl_czk": null
+      }
+    ]
+  }
+]

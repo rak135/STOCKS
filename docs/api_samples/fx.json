@@ -1,0 +1,80 @@
+[
+  {
+    "year": 2020,
+    "method": "FX_UNIFIED_GFR",
+    "unified_rate": 23.14,
+    "daily_cached": 0,
+    "daily_expected": 0,
+    "missing_dates": [],
+    "source_label": "default",
+    "source_url": null,
+    "verified_at": null,
+    "manual_override": false,
+    "locked": false
+  },
+  {
+    "year": 2021,
+    "method": "FX_UNIFIED_GFR",
+    "unified_rate": 21.68,
+    "daily_cached": 0,
+    "daily_expected": 0,
+    "missing_dates": [],
+    "source_label": "default",
+    "source_url": null,
+    "verified_at": null,
+    "manual_override": false,
+    "locked": false
+  },
+  {
+    "year": 2023,
+    "method": "FX_UNIFIED_GFR",
+    "unified_rate": 22.21,
+    "daily_cached": 0,
+    "daily_expected": 0,
+    "missing_dates": [],
+    "source_label": "GFŘ-D-57",
+    "source_url": null,
+    "verified_at": null,
+    "manual_override": false,
+    "locked": false
+  },
+  {
+    "year": 2024,
+    "method": "FX_UNIFIED_GFR",
+    "unified_rate": 23.28,
+    "daily_cached": 0,
+    "daily_expected": 0,
+    "missing_dates": [],
+    "source_label": "GFŘ-D-65",
+    "source_url": null,
+    "verified_at": null,
+    "manual_override": false,
+    "locked": true
+  },
+  {
+    "year": 2025,
+    "method": "FX_UNIFIED_GFR",
+    "unified_rate": 21.84,
+    "daily_cached": 0,
+    "daily_expected": 0,
+    "missing_dates": [],
+    "source_label": "GFŘ-D-75",
+    "source_url": null,
+    "verified_at": null,
+    "manual_override": false,
+    "locked": false
+  },
+  {
+    "year": 2026,
+    "method": "FX_UNIFIED_GFR",
+    "unified_rate": 22.0,
+    "daily_cached": 0,
+    "daily_expected": 0,
+    "missing_dates": [],
+    "source_label": "default",
+    "source_url": null,
+    "verified_at": null,
+    "manual_override": false,
+    "locked": false
+  }
+]
