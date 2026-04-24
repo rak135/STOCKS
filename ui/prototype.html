@@ -1,0 +1,1285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Stocks Tax — Operator Cockpit (prototype)</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          bg:        "#FAF9F7",
+          surface:   "#FFFFFF",
+          raised:    "#FFFDFA",
+          borderc:   "#EDE8E0",
+          ink:       "#1F1E1B",
+          ink2:      "#6E6A62",
+          ink3:      "#A09B91",
+          accent:    "#C96442",
+          accentBg:  "#F6EDE6",
+          ok:        "#4E7F63",
+          okBg:      "#E9F0EB",
+          warn:      "#B57614",
+          warnBg:    "#F6EDDB",
+          err:       "#B0413E",
+          errBg:     "#F5E3E1",
+          filed:     "#5A574F",
+          filedBg:   "#EEEBE5",
+        },
+        fontFamily: {
+          sans: ['Inter', 'system-ui', 'sans-serif'],
+          mono: ['ui-monospace','SFMono-Regular','Menlo','monospace'],
+        },
+        boxShadow: {
+          soft: "0 1px 2px rgba(0,0,0,0.04)",
+        },
+      },
+    },
+  };
+</script>
+
+<link rel="preconnect" href="https://rsms.me/" />
+<link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<style>
+  html, body, #root { height: 100%; }
+  body { font-family: 'Inter', system-ui, sans-serif; background: #FAF9F7; color: #1F1E1B; }
+  .num { font-variant-numeric: tabular-nums; }
+  .scroll-fade { -webkit-mask-image: linear-gradient(to bottom, black 90%, transparent); }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #E2DCD0; border-radius: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  .focus-ring:focus-visible { outline: 2px solid #C96442; outline-offset: 2px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react,env">
+const { useState, useMemo, useEffect } = React;
+
+/* ──────────────────────────────────────────────────────────────
+   Mock data
+   ────────────────────────────────────────────────────────────── */
+
+const PROJECT = {
+  name: "Stocks Tax 2020–2025",
+  path: "C:\\DATA\\PROJECTS\\STOCKS",
+  csv_folder: "C:\\DATA\\PROJECTS\\STOCKS\\.csv",
+  output: "stock_tax_system.xlsx",
+  last_calculated_at: "2026-04-24 17:51",
+};
+
+const FILES = [
+  { name:"Lynx.csv",       broker:"Lynx",       currency:"USD", total:412, trades:287, ignored:125, warnings:[], status:"ok" },
+  { name:"Revolut.csv",    broker:"Revolut",    currency:"USD", total:198, trades:156, ignored:42,  warnings:[], status:"ok" },
+  { name:"Trading212.csv", broker:"Trading212", currency:"USD", total:604, trades:489, ignored:115, warnings:["2 rows with blank Trade Date skipped","1 fractional quantity rounded"], status:"warnings" },
+  { name:"XTB_CZK.csv",    broker:"XTB",        currency:"CZK", total:318, trades:272, ignored:46,  warnings:[], status:"ok" },
+  { name:"XTB_USD.csv",    broker:"XTB",        currency:"USD", total:427, trades:355, ignored:72,  warnings:[], status:"ok" },
+];
+
+const YEARS = [
+  { year:2025, method:"LIFO", filedMethod:null, fx:"FX_DAILY_CNB", rate:0.15, exempt100k:true,
+    base:48210, proceeds:612400, exempt:0, tax:7231, filed:false, locked:false,
+    filedTax:null, recon:"not_filed", note:null,
+    comparison:{ FIFO: 8912, LIFO: 7231, MIN_GAIN: 6502, MAX_GAIN: 11420 } },
+  { year:2024, method:"LIFO", filedMethod:"LIFO", fx:"FX_UNIFIED_GFR", rate:0.15, exempt100k:false,
+    base:312450, proceeds:1284600, exempt:0, tax:46867, filed:true, locked:true,
+    filedTax:46867, recon:"reconciled", note:null, comparison:null },
+  { year:2023, method:"LIFO", filedMethod:null, fx:"FX_UNIFIED_GFR", rate:0.15, exempt100k:false,
+    base:215800, proceeds:918300, exempt:0, tax:32370, filed:false, locked:false,
+    filedTax:null, recon:"not_filed", note:null,
+    comparison:{ FIFO: 35104, LIFO: 32370, MIN_GAIN: 29880, MAX_GAIN: 41220 } },
+  { year:2021, method:"LIFO", filedMethod:null, fx:"FX_UNIFIED_GFR", rate:0.15, exempt100k:false,
+    base:86420, proceeds:402100, exempt:0, tax:12963, filed:false, locked:false,
+    filedTax:null, recon:"not_filed", note:null,
+    comparison:{ FIFO: 14002, LIFO: 12963, MIN_GAIN: 11800, MAX_GAIN: 17810 } },
+  { year:2020, method:"LIFO", filedMethod:null, fx:"FX_UNIFIED_GFR", rate:0.15, exempt100k:false,
+    base:142300, proceeds:558200, exempt:0, tax:21345, filed:false, locked:false,
+    filedTax:null, recon:"not_filed", note:null,
+    comparison:{ FIFO: 23010, LIFO: 21345, MIN_GAIN: 19900, MAX_GAIN: 28110 } },
+];
+
+const SELLS = [
+  { id:"s-2025-msft-01", year:2025, date:"2025-02-18", ticker:"MSFT", broker:"Lynx",
+    qty:10, priceUsd:412.55, proceedsCzk: 95_780, method:"LIFO",
+    matchedQty:10, review:"unreviewed", classification:"taxable",
+    source:{file:"Lynx.csv", row:184},
+    lots:[
+      { lot:"L-MSFT-0009", buyDate:"2024-08-12", broker:"Lynx", source:{file:"Lynx.csv",row:142}, qty:10,
+        buyUsd:398.14, sellUsd:412.55, fxBuy:23.29, fxSell:23.21,
+        costCzk: 92_726, proceedsCzk:95_780, holdingDays:190, exempt:false, gainCzk:3_054 },
+    ] },
+  { id:"s-2025-adbe-01", year:2025, date:"2025-03-22", ticker:"ADBE", broker:"Trading212",
+    qty:6, priceUsd:470.10, proceedsCzk:66_210, method:"LIFO",
+    matchedQty:4, review:"flagged", classification:"taxable",
+    source:{file:"Trading212.csv", row:501},
+    lots:[
+      { lot:"L-ADBE-0004", buyDate:"2025-01-20", broker:"Trading212", source:{file:"Trading212.csv",row:462}, qty:4,
+        buyUsd:501.22, sellUsd:470.10, fxBuy:23.10, fxSell:23.46,
+        costCzk:46_312, proceedsCzk:44_140, holdingDays:61, exempt:false, gainCzk:-2_172 },
+    ] },
+  { id:"s-2024-nvda-01", year:2024, date:"2024-11-04", ticker:"NVDA", broker:"Revolut",
+    qty:25, priceUsd:137.20, proceedsCzk:798_412, method:"LIFO",
+    matchedQty:25, review:"reviewed", classification:"taxable",
+    source:{file:"Revolut.csv", row:91},
+    lots:[
+      { lot:"L-NVDA-0033", buyDate:"2024-03-04", broker:"Revolut", source:{file:"Revolut.csv",row:71}, qty:10,
+        buyUsd:85.31, sellUsd:137.20, fxBuy:23.80, fxSell:23.26,
+        costCzk:203_038, proceedsCzk:319_165, holdingDays:245, exempt:false, gainCzk:116_127 },
+      { lot:"L-NVDA-0028", buyDate:"2023-11-18", broker:"Lynx", source:{file:"Lynx.csv",row:53}, qty:10,
+        buyUsd:48.65, sellUsd:137.20, fxBuy:22.90, fxSell:23.26,
+        costCzk:111_408, proceedsCzk:319_165, holdingDays:352, exempt:false, gainCzk:207_757 },
+      { lot:"L-NVDA-0019", buyDate:"2022-09-02", broker:"Lynx", source:{file:"Lynx.csv",row:29}, qty:5,
+        buyUsd:135.40, sellUsd:137.20, fxBuy:24.70, fxSell:23.26,
+        costCzk:167_219, proceedsCzk:159_582, holdingDays:794, exempt:false, gainCzk:-7_637 },
+    ] },
+  { id:"s-2024-aapl-01", year:2024, date:"2024-06-12", ticker:"AAPL", broker:"Lynx",
+    qty:15, priceUsd:208.50, proceedsCzk:727_614, method:"LIFO",
+    matchedQty:15, review:"reviewed", classification:"mixed",
+    source:{file:"Lynx.csv", row:75},
+    lots:[
+      { lot:"L-AAPL-0007", buyDate:"2022-01-04", broker:"Lynx", source:{file:"Lynx.csv",row:18}, qty:8,
+        buyUsd:179.21, sellUsd:208.50, fxBuy:21.60, fxSell:23.24,
+        costCzk:30_963, proceedsCzk:38_755, holdingDays:890, exempt:false, gainCzk:7_792 },
+      { lot:"L-AAPL-0002", buyDate:"2020-11-02", broker:"Lynx", source:{file:"Lynx.csv",row:5},  qty:7,
+        buyUsd:108.77, sellUsd:208.50, fxBuy:22.85, fxSell:23.24,
+        costCzk:17_394, proceedsCzk:33_910, holdingDays:1318, exempt:true,  gainCzk:0 },
+    ] },
+  { id:"s-2024-sofi-01", year:2024, date:"2024-03-15", ticker:"SOFI", broker:"Revolut",
+    qty:200, priceUsd:8.12, proceedsCzk:37_730, method:"LIFO",
+    matchedQty:200, review:"reviewed", classification:"taxable",
+    source:{file:"Revolut.csv", row:58},
+    lots:[
+      { lot:"L-SOFI-0005", buyDate:"2024-01-11", broker:"Revolut", source:{file:"Revolut.csv",row:31}, qty:200,
+        buyUsd:9.40, sellUsd:8.12, fxBuy:23.77, fxSell:23.23,
+        costCzk:44_687, proceedsCzk:37_730, holdingDays:64, exempt:false, gainCzk:-6_957 },
+    ] },
+  { id:"s-2023-tsla-01", year:2023, date:"2023-08-30", ticker:"TSLA", broker:"XTB",
+    qty:18, priceUsd:257.44, proceedsCzk:102_410, method:"LIFO",
+    matchedQty:18, review:"reviewed", classification:"taxable",
+    source:{file:"XTB_USD.csv", row:210},
+    lots:[
+      { lot:"L-TSLA-0011", buyDate:"2022-05-19", broker:"XTB", source:{file:"XTB_USD.csv",row:102}, qty:12,
+        buyUsd:208.10, sellUsd:257.44, fxBuy:23.40, fxSell:22.12,
+        costCzk:58_440, proceedsCzk:68_274, holdingDays:468, exempt:false, gainCzk:9_834 },
+      { lot:"L-TSLA-0004", buyDate:"2021-02-07", broker:"XTB", source:{file:"XTB_USD.csv",row:40}, qty:6,
+        buyUsd:849.10, sellUsd:257.44, fxBuy:21.50, fxSell:22.12,
+        costCzk:109_534, proceedsCzk:34_159, holdingDays:934, exempt:false, gainCzk:-75_375 },
+    ] },
+];
+
+const OPEN_POSITIONS = [
+  { ticker:"ADBE", calc:12, yahoo:12,   diff:0,  status:"ok",
+    lots:[
+      {lot:"L-ADBE-0012", date:"2025-08-11", broker:"Trading212", qty:2,  costCzk:15_982, paperCzk:-4_820},
+      {lot:"L-ADBE-0011", date:"2025-04-02", broker:"Trading212", qty:10, costCzk:108_110, paperCzk:-31_200},
+    ] },
+  { ticker:"SOFI", calc:45, yahoo:45,   diff:0,  status:"ok",
+    lots:[
+      {lot:"L-SOFI-0012", date:"2025-11-21", broker:"Trading212", qty:45, costCzk:26_020, paperCzk:-5_890},
+    ] },
+  { ticker:"MSFT", calc:3,  yahoo:5,    diff:-2, status:"warn",
+    lots:[
+      {lot:"L-MSFT-0010", date:"2025-04-03", broker:"Lynx", qty:3, costCzk:29_040, paperCzk:2_410},
+    ] },
+  { ticker:"NVDA", calc:8,  yahoo:null, diff:null, status:"unknown",
+    lots:[
+      {lot:"L-NVDA-0040", date:"2025-07-02", broker:"Revolut", qty:8, costCzk:28_120, paperCzk:null},
+    ] },
+];
+
+const FX = [
+  { year:2025, method:"FX_DAILY_CNB",  unified:null, dailyCached:312, dailyExpected:315,
+    missing:["2025-01-02","2025-03-14","2025-04-18"],
+    source:"CNB – Kurzy devizového trhu (denní)", url:"https://www.cnb.cz",
+    verifiedAt:null, manual:false, locked:false },
+  { year:2024, method:"FX_UNIFIED_GFR", unified:23.26, dailyCached:0, dailyExpected:0,
+    missing:[], source:"GFŘ jednotný kurz 2024", url:null,
+    verifiedAt:"2025-02-14 10:22", manual:false, locked:true },
+  { year:2023, method:"FX_UNIFIED_GFR", unified:22.14, dailyCached:0, dailyExpected:0,
+    missing:[], source:"GFŘ jednotný kurz 2023", url:null,
+    verifiedAt:"2024-01-12 09:11", manual:false, locked:false },
+  { year:2021, method:"FX_UNIFIED_GFR", unified:21.72, dailyCached:0, dailyExpected:0,
+    missing:[], source:"GFŘ jednotný kurz 2021", url:null,
+    verifiedAt:"2022-01-18 08:40", manual:false, locked:false },
+  { year:2020, method:"FX_UNIFIED_GFR", unified:23.14, dailyCached:0, dailyExpected:0,
+    missing:[], source:"GFŘ jednotný kurz 2020", url:null,
+    verifiedAt:"2021-02-03 08:15", manual:false, locked:false },
+];
+
+const CHECKS = [
+  { id:"c1", level:"warn", message:"2025 FX: 3 daily CNB rates missing", href:"fx"   },
+  { id:"c2", level:"warn", message:"MSFT open position differs from Yahoo by 2 shares", href:"positions" },
+  { id:"c3", level:"info", message:"2 unreviewed sells in 2025", href:"sales" },
+  { id:"c4", level:"info", message:"Trading212.csv has 2 blank-date rows skipped", href:"import" },
+];
+
+/* ──────────────────────────────────────────────────────────────
+   Formatting helpers
+   ────────────────────────────────────────────────────────────── */
+const czk  = n => (n==null?"—":n.toLocaleString("cs-CZ",{style:"currency",currency:"CZK",maximumFractionDigits:0}));
+const usd  = n => (n==null?"—":n.toLocaleString("en-US",{style:"currency",currency:"USD",minimumFractionDigits:2,maximumFractionDigits:2}));
+const num  = n => (n==null?"—":n.toLocaleString("cs-CZ"));
+const fxn  = n => (n==null?"—":n.toFixed(3));
+
+/* ──────────────────────────────────────────────────────────────
+   Tiny icon set (inline SVG, stroke-based, neutral)
+   ────────────────────────────────────────────────────────────── */
+const Icon = ({ name, className="w-4 h-4" }) => {
+  const p = {
+    overview:    <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></>,
+    import:      <><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></>,
+    years:       <><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18"/><path d="M8 3v4M16 3v4"/></>,
+    sales:       <><path d="M4 6h16"/><path d="M4 12h10"/><path d="M4 18h16"/><circle cx="18" cy="12" r="2"/></>,
+    positions:   <><path d="M3 21h18"/><path d="M7 21V10"/><path d="M12 21V4"/><path d="M17 21V14"/></>,
+    fx:          <><path d="M4 7h12l-3-3"/><path d="M20 17H8l3 3"/></>,
+    audit:       <><path d="M6 3h9l5 5v13H6z"/><path d="M14 3v6h6"/><path d="M9 14h7M9 18h7M9 10h3"/></>,
+    settings:    <><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></>,
+    check:       <><path d="M5 12l5 5 9-11"/></>,
+    alert:       <><path d="M12 9v4"/><circle cx="12" cy="17" r=".5" fill="currentColor"/><path d="M10.3 3.9 2.5 18a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></>,
+    lock:        <><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></>,
+    unlock:      <><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.8-1"/></>,
+    search:      <><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></>,
+    filter:      <><path d="M4 5h16"/><path d="M7 12h10"/><path d="M10 19h4"/></>,
+    folder:      <><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></>,
+    download:    <><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/></>,
+    refresh:     <><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></>,
+    file:        <><path d="M6 3h9l5 5v13H6z"/><path d="M14 3v6h6"/></>,
+    chev:        <><path d="m8 10 4 4 4-4"/></>,
+    chevR:       <><path d="m10 8 4 4-4 4"/></>,
+    dot:         <><circle cx="12" cy="12" r="4" fill="currentColor"/></>,
+    external:    <><path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M20 14v6H4V4h6"/></>,
+    pencil:      <><path d="M4 20h4L20 8l-4-4L4 16z"/></>,
+    flag:        <><path d="M5 21V4"/><path d="M5 5h12l-2 4 2 4H5"/></>,
+    plus:        <><path d="M12 5v14M5 12h14"/></>,
+    x:           <><path d="M6 6l12 12M18 6 6 18"/></>,
+    clipboard:   <><rect x="7" y="4" width="10" height="16" rx="2"/><path d="M9 4h6v3H9z"/></>,
+    link:        <><path d="M10 14a5 5 0 0 1 0-7l2-2a5 5 0 0 1 7 7l-1 1"/><path d="M14 10a5 5 0 0 1 0 7l-2 2a5 5 0 0 1-7-7l1-1"/></>,
+  }[name] || null;
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none"
+         stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"
+         aria-hidden="true">{p}</svg>
+  );
+};
+
+/* ──────────────────────────────────────────────────────────────
+   Base UI primitives
+   ────────────────────────────────────────────────────────────── */
+const Chip = ({ tone="neutral", children, className="" }) => {
+  const tones = {
+    neutral: "bg-borderc/60 text-ink2",
+    info:    "bg-accentBg  text-accent",
+    ok:      "bg-okBg      text-ok",
+    warn:    "bg-warnBg    text-warn",
+    err:     "bg-errBg     text-err",
+    filed:   "bg-filedBg   text-filed",
+  };
+  return <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ${tones[tone]} ${className}`}>{children}</span>;
+};
+
+const Button = ({ variant="primary", className="", children, ...rest }) => {
+  const base = "inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium focus-ring transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
+  const v = {
+    primary:   "bg-accent text-white hover:bg-[#B3573A]",
+    secondary: "bg-white border border-borderc text-ink hover:bg-bg",
+    ghost:     "text-ink2 hover:text-ink hover:bg-borderc/40",
+    danger:    "bg-white border border-errBg text-err hover:bg-errBg",
+  }[variant];
+  return <button className={`${base} ${v} ${className}`} {...rest}>{children}</button>;
+};
+
+const Card = ({ children, className="", raised=false }) => (
+  <div className={`rounded-xl border border-borderc ${raised?"bg-raised shadow-soft":"bg-surface"} ${className}`}>{children}</div>
+);
+
+const SectionHeader = ({ title, subtitle, primary, secondary }) => (
+  <div className="flex items-start justify-between mb-6">
+    <div>
+      <h1 className="text-[22px] font-semibold tracking-tight">{title}</h1>
+      {subtitle && <p className="text-sm text-ink2 mt-1 max-w-xl">{subtitle}</p>}
+    </div>
+    <div className="flex items-center gap-2">
+      {secondary}
+      {primary}
+    </div>
+  </div>
+);
+
+const KeyVal = ({ label, children, mono=true, className="" }) => (
+  <div className={className}>
+    <div className="text-[11px] uppercase tracking-wider text-ink3 mb-1">{label}</div>
+    <div className={`text-sm ${mono?"num":""} text-ink`}>{children}</div>
+  </div>
+);
+
+/* ──────────────────────────────────────────────────────────────
+   Sidebar + top bar shell
+   ────────────────────────────────────────────────────────────── */
+const NAV = [
+  { id:"overview",  label:"Overview",       icon:"overview"  },
+  { id:"import",    label:"Import",         icon:"import"    },
+  { id:"years",     label:"Tax Years",      icon:"years"     },
+  { id:"sales",     label:"Sales Review",   icon:"sales"     },
+  { id:"positions", label:"Open Positions", icon:"positions" },
+  { id:"fx",        label:"FX Rates",       icon:"fx"        },
+  { id:"audit",     label:"Audit Pack",     icon:"audit"     },
+  { id:"settings",  label:"Settings",       icon:"settings"  },
+];
+
+function Sidebar({ active, onGo }) {
+  return (
+    <aside className="w-60 shrink-0 border-r border-borderc bg-surface flex flex-col">
+      <div className="px-4 pt-5 pb-4">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-md bg-accent text-white grid place-items-center text-[11px] font-semibold">CZ</div>
+          <div className="leading-tight">
+            <div className="text-[13px] font-semibold">Stocks Tax</div>
+            <div className="text-[11px] text-ink3">Operator cockpit</div>
+          </div>
+        </div>
+      </div>
+      <nav className="px-2 py-2 flex-1">
+        {NAV.map(n => {
+          const isActive = active===n.id;
+          return (
+            <button key={n.id} onClick={()=>onGo(n.id)}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] focus-ring ${
+                isActive
+                  ? "bg-accentBg text-ink font-medium"
+                  : "text-ink2 hover:bg-borderc/40 hover:text-ink"
+              }`}>
+              <Icon name={n.icon} className="w-4 h-4" />
+              {n.label}
+            </button>
+          );
+        })}
+      </nav>
+      <div className="px-4 py-3 border-t border-borderc text-[11px] text-ink3 space-y-0.5">
+        <div className="truncate">{PROJECT.path}</div>
+        <div>Last calc {PROJECT.last_calculated_at}</div>
+      </div>
+    </aside>
+  );
+}
+
+function TopBar({ status, onRecalc, dirty }) {
+  const tone = { ready:"ok", needs_review:"warn", blocked:"err" }[status];
+  const label = { ready:"Ready", needs_review:"Needs review", blocked:"Blocked" }[status];
+  return (
+    <header className="flex items-center justify-between border-b border-borderc bg-surface/90 backdrop-blur px-6 h-14 shrink-0">
+      <div className="flex items-center gap-3">
+        <div className="text-[13px] text-ink2">Project</div>
+        <div className="text-[14px] font-medium">{PROJECT.name}</div>
+        <Chip tone={tone}><Icon name="dot" className="w-2 h-2"/>{label}</Chip>
+      </div>
+      <div className="flex items-center gap-2">
+        {dirty && <span className="text-[11px] text-warn">Unsaved changes</span>}
+        <Button variant="secondary"><Icon name="folder"/>Open CSV folder</Button>
+        <Button onClick={onRecalc}><Icon name="refresh"/>Recalculate</Button>
+      </div>
+    </header>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────
+   OVERVIEW
+   ────────────────────────────────────────────────────────────── */
+function Overview({ go, status }) {
+  const hero = {
+    ready:        { title:"Ready", body:"No blocking issues. All filed years are locked.", cta:null },
+    needs_review: { title:"Needs review",
+                    body:"2 sells in 2025 are unreviewed and 3 daily CNB rates for 2025 are missing.",
+                    cta:{label:"Review 2 unreviewed sells", go:"sales"} },
+    blocked:      { title:"Blocked", body:"Backend unreachable or CSV folder missing.", cta:null },
+  }[status];
+
+  return (
+    <div className="max-w-5xl mx-auto px-8 py-8">
+      <SectionHeader
+        title="Overview"
+        subtitle="Where does the tax model stand, and what should you do next?"
+      />
+
+      <Card className="p-6 mb-6" raised>
+        <div className="flex items-start gap-4">
+          <div className="w-10 h-10 rounded-full grid place-items-center bg-warnBg text-warn"><Icon name="alert" className="w-5 h-5"/></div>
+          <div className="flex-1">
+            <div className="text-xs uppercase tracking-wider text-ink3 mb-1">Status</div>
+            <div className="text-[22px] font-semibold tracking-tight mb-1">{hero.title}</div>
+            <div className="text-ink2 text-sm max-w-2xl">{hero.body}</div>
+          </div>
+          {hero.cta && <Button onClick={()=>go(hero.cta.go)}>{hero.cta.label}<Icon name="chevR"/></Button>}
+        </div>
+      </Card>
+
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        <Card className="p-4">
+          <div className="text-[11px] uppercase tracking-wider text-ink3 mb-1">Project path</div>
+          <div className="text-sm font-mono truncate">{PROJECT.path}</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-[11px] uppercase tracking-wider text-ink3 mb-1">CSV folder</div>
+          <div className="text-sm font-mono truncate">{PROJECT.csv_folder}</div>
+          <div className="text-xs text-ink3 mt-1">{FILES.length} files detected</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-[11px] uppercase tracking-wider text-ink3 mb-1">Last calculation</div>
+          <div className="text-sm">{PROJECT.last_calculated_at}</div>
+          <div className="text-xs text-ink3 mt-1">Source: {PROJECT.output}</div>
+        </Card>
+      </div>
+
+      <h2 className="text-sm font-semibold text-ink2 mb-3">Tax years</h2>
+      <div className="grid grid-cols-1 gap-3 mb-8">
+        {YEARS.map(y => <YearSummaryCard key={y.year} y={y} onOpen={()=>go("years")}/>)}
+      </div>
+
+      <h2 className="text-sm font-semibold text-ink2 mb-3">Unresolved</h2>
+      <Card>
+        {CHECKS.length===0 && <div className="p-6 text-sm text-ink3">No unresolved issues.</div>}
+        <ul className="divide-y divide-borderc">
+          {CHECKS.map(c => (
+            <li key={c.id} className="flex items-center gap-3 px-4 py-3">
+              <Chip tone={c.level==="warn"?"warn":c.level==="error"?"err":"info"}>{c.level}</Chip>
+              <span className="text-sm flex-1">{c.message}</span>
+              <button className="text-sm text-accent hover:underline focus-ring" onClick={()=>go(c.href)}>
+                Resolve <Icon name="chevR" className="w-3 h-3 inline"/>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </Card>
+    </div>
+  );
+}
+
+function YearSummaryCard({ y, onOpen }) {
+  const isFiled = y.filed;
+  return (
+    <Card className={`px-5 py-4 flex items-center gap-5 ${isFiled?"bg-filedBg/40":""}`}>
+      <div className="w-16">
+        <div className="text-[22px] font-semibold tracking-tight">{y.year}</div>
+        {isFiled
+          ? <Chip tone="filed"><Icon name="lock" className="w-3 h-3"/>Filed · Locked</Chip>
+          : <Chip tone="neutral">Draft</Chip>}
+      </div>
+      <div className="flex-1 grid grid-cols-4 gap-3">
+        <KeyVal label="Method">{isFiled ? <><span className="text-filed">{y.method}</span> <span className="text-ink3 text-xs">(filed)</span></> : y.method}</KeyVal>
+        <KeyVal label="Taxable base">{czk(y.base)}</KeyVal>
+        <KeyVal label="Tax due">{czk(y.tax)}</KeyVal>
+        <KeyVal label="FX method" mono={false}>{y.fx==="FX_DAILY_CNB"?"CNB daily":"GFŘ yearly"}</KeyVal>
+      </div>
+      <div className="w-44 text-right">
+        {isFiled && <div className="text-[11px] text-filed italic">Filed year — LIFO — do not optimise</div>}
+        {!isFiled && y.year===2025 && <Chip tone="warn">1 issue</Chip>}
+        {!isFiled && y.year!==2025 && <Chip tone="neutral">No issues</Chip>}
+        <button onClick={onOpen} className="ml-3 text-sm text-accent hover:underline focus-ring">Open <Icon name="chevR" className="w-3 h-3 inline"/></button>
+      </div>
+    </Card>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────
+   IMPORT
+   ────────────────────────────────────────────────────────────── */
+function ImportScreen() {
+  const [drawer, setDrawer] = useState(null);
+  return (
+    <div className="max-w-5xl mx-auto px-8 py-8">
+      <SectionHeader
+        title="Import"
+        subtitle="Is the CSV folder correct and complete?"
+        primary={<Button><Icon name="refresh"/>Recalculate from .csv</Button>}
+        secondary={<Button variant="secondary"><Icon name="folder"/>Open folder</Button>}
+      />
+
+      <Card className="p-4 mb-5 flex items-center gap-3">
+        <Icon name="folder" className="w-5 h-5 text-ink2"/>
+        <div className="font-mono text-sm">{PROJECT.csv_folder}</div>
+        <span className="text-ink3 text-xs">{FILES.length} files · {FILES.reduce((a,f)=>a+f.trades,0).toLocaleString()} trades</span>
+      </Card>
+
+      <div className="space-y-3">
+        {FILES.map(f => (
+          <Card key={f.name} className="p-5">
+            <div className="flex items-center gap-4 mb-3">
+              <Icon name="file" className="w-5 h-5 text-ink2"/>
+              <div className="font-mono text-sm">{f.name}</div>
+              <Chip tone="neutral">{f.broker}</Chip>
+              <Chip tone="neutral">{f.currency}</Chip>
+              <div className="flex-1"/>
+              <Chip tone={f.status==="ok"?"ok":f.status==="warnings"?"warn":"err"}>
+                {f.status==="ok"?"OK":f.status==="warnings"?"Warnings":"Error"}
+              </Chip>
+            </div>
+            <div className="grid grid-cols-4 gap-4">
+              <KeyVal label="Total rows">{num(f.total)}</KeyVal>
+              <KeyVal label="Trades">{num(f.trades)}</KeyVal>
+              <KeyVal label="Ignored (positions)">{num(f.ignored)}</KeyVal>
+              <KeyVal label="Warnings">{f.warnings.length}</KeyVal>
+            </div>
+            {f.warnings.length>0 && (
+              <ul className="mt-3 space-y-1">
+                {f.warnings.map((w,i)=>(
+                  <li key={i} className="text-xs text-warn flex items-center gap-2">
+                    <Icon name="alert" className="w-3 h-3"/>{w}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-3 flex justify-end">
+              <Button variant="ghost" onClick={()=>setDrawer(f)}>View raw rows <Icon name="chevR"/></Button>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      {drawer && <RawRowsDrawer file={drawer} onClose={()=>setDrawer(null)}/>}
+    </div>
+  );
+}
+
+function RawRowsDrawer({ file, onClose }) {
+  return (
+    <div className="fixed inset-0 z-40">
+      <div className="absolute inset-0 bg-ink/20" onClick={onClose}/>
+      <aside className="absolute right-0 top-0 h-full w-[520px] bg-surface border-l border-borderc flex flex-col">
+        <div className="flex items-center justify-between px-5 h-14 border-b border-borderc">
+          <div className="font-medium">{file.name} — raw rows (preview)</div>
+          <Button variant="ghost" onClick={onClose}><Icon name="x"/></Button>
+        </div>
+        <div className="p-5 flex-1 overflow-auto text-xs font-mono">
+          <div className="text-ink3 mb-2">Showing 5 sample rows (of {num(file.total)}).</div>
+          <table className="w-full">
+            <thead className="text-ink3">
+              <tr className="border-b border-borderc">
+                <th className="text-left py-1">#</th>
+                <th className="text-left py-1">Date</th>
+                <th className="text-left py-1">Symbol</th>
+                <th className="text-left py-1">Qty</th>
+                <th className="text-left py-1">Price</th>
+                <th className="text-left py-1">Type</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                ["1","20250811","ADBE","2.0","341.29","BUY"],
+                ["2","20251121","SOFI","5.0","24.80","BUY"],
+                ["3","20250218","MSFT","10.0","412.55","SELL"],
+                ["4","20250322","ADBE","6.0","470.10","SELL"],
+                ["5","20250403","MSFT","3.0","405.18","BUY"],
+              ].map(r=>(
+                <tr key={r[0]} className="border-b border-borderc/60">
+                  {r.map((c,i)=><td key={i} className="py-1 pr-2">{c}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────
+   TAX YEARS
+   ────────────────────────────────────────────────────────────── */
+function YearsScreen() {
+  const [years, setYears] = useState(YEARS);
+  const patch = (year, p) => setYears(ys => ys.map(y=>y.year===year?{...y,...p}:y));
+  return (
+    <div className="max-w-5xl mx-auto px-8 py-8">
+      <SectionHeader
+        title="Tax Years"
+        subtitle="Method, FX, 100k exemption, filed status, and locking — per year."
+      />
+      <div className="space-y-5">
+        {years.map(y=> <YearPanel key={y.year} y={y} onPatch={p=>patch(y.year,p)}/> )}
+      </div>
+    </div>
+  );
+}
+
+function YearPanel({ y, onPatch }) {
+  const isLocked = y.locked;
+  return (
+    <Card className={`${isLocked?"bg-filedBg/30":""} overflow-hidden`}>
+      <div className="flex items-center gap-4 px-5 py-4 border-b border-borderc">
+        <div className="text-[20px] font-semibold tracking-tight w-20">{y.year}</div>
+        {isLocked
+          ? <Chip tone="filed"><Icon name="lock" className="w-3 h-3"/>Filed · Locked · LIFO</Chip>
+          : <Chip tone="neutral">Draft</Chip>}
+        <div className="flex-1"/>
+        <KeyVal label="Tax due" className="text-right">{czk(y.tax)}</KeyVal>
+      </div>
+
+      <div className="grid grid-cols-2 gap-6 p-5">
+        {/* LEFT: settings */}
+        <div className="space-y-4">
+          <div>
+            <label className="text-[11px] uppercase tracking-wider text-ink3">Method policy</label>
+            <div className="mt-1 flex items-center gap-2">
+              {["FIFO","LIFO","MIN_GAIN","MAX_GAIN"].map(m=>(
+                <button key={m}
+                  disabled={isLocked}
+                  onClick={()=>onPatch({method:m})}
+                  className={`px-2.5 py-1 rounded-md text-xs border focus-ring ${
+                    y.method===m
+                      ? "bg-accentBg border-accentBg text-accent font-medium"
+                      : "bg-surface border-borderc text-ink2 hover:text-ink"
+                  } ${isLocked?"opacity-50 cursor-not-allowed":""}`}>
+                  {m}
+                </button>
+              ))}
+              {isLocked && <Chip tone="filed" className="ml-2">Filed under LIFO</Chip>}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-[11px] uppercase tracking-wider text-ink3">FX method</label>
+              <select disabled={isLocked}
+                      value={y.fx}
+                      onChange={e=>onPatch({fx:e.target.value})}
+                      className="mt-1 w-full border border-borderc rounded-md px-2 py-1.5 text-sm bg-surface focus-ring">
+                <option value="FX_DAILY_CNB">CNB daily</option>
+                <option value="FX_UNIFIED_GFR">GFŘ yearly</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-[11px] uppercase tracking-wider text-ink3">Tax rate</label>
+              <input disabled={isLocked}
+                     type="number" step="0.01" value={y.rate}
+                     onChange={e=>onPatch({rate:parseFloat(e.target.value)})}
+                     className="mt-1 w-full border border-borderc rounded-md px-2 py-1.5 text-sm bg-surface num focus-ring"/>
+            </div>
+          </div>
+
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={y.exempt100k} disabled={isLocked}
+                   onChange={e=>onPatch({exempt100k:e.target.checked})}/>
+            Apply 100 000 CZK gross-proceeds exemption
+          </label>
+        </div>
+
+        {/* RIGHT: numbers + reconciliation */}
+        <div className="space-y-3">
+          <div className="grid grid-cols-3 gap-3">
+            <KeyVal label="Gross proceeds">{czk(y.proceeds)}</KeyVal>
+            <KeyVal label="Exempt">{czk(y.exempt)}</KeyVal>
+            <KeyVal label="Taxable base">{czk(y.base)}</KeyVal>
+          </div>
+          <Card className="p-3">
+            <div className="text-[11px] uppercase tracking-wider text-ink3 mb-2">Reconciliation</div>
+            <div className="grid grid-cols-3 gap-3 items-center">
+              <KeyVal label="Workbook tax">{czk(y.tax)}</KeyVal>
+              <KeyVal label="Filed tax">{y.filedTax==null?"—":czk(y.filedTax)}</KeyVal>
+              <div>
+                {y.filedTax==null && <Chip tone="neutral">Not filed</Chip>}
+                {y.filedTax!=null && y.filedTax===y.tax && <Chip tone="ok"><Icon name="check" className="w-3 h-3"/>Reconciled</Chip>}
+                {y.filedTax!=null && y.filedTax!==y.tax && <Chip tone="warn">Needs attention</Chip>}
+              </div>
+            </div>
+          </Card>
+
+          <div className="flex items-center gap-2 pt-1">
+            {!isLocked
+              ? <Button variant="secondary" onClick={()=>onPatch({filed:true, locked:true})}>
+                  <Icon name="lock"/>Mark as filed & lock under {y.method}
+                </Button>
+              : <Button variant="danger" onClick={()=>onPatch({filed:false, locked:false})}>
+                  <Icon name="unlock"/>Unlock {y.year}
+                </Button>}
+          </div>
+        </div>
+      </div>
+
+      {/* Method comparison strip */}
+      <div className="px-5 py-3 border-t border-borderc bg-bg/60">
+        {isLocked
+          ? <div className="text-[12px] text-filed italic">Filed year — LIFO — do not optimise. Method comparison is hidden for locked years.</div>
+          : y.comparison && (
+              <div className="flex items-center gap-4 text-xs text-ink2">
+                <span className="uppercase tracking-wider text-[11px] text-ink3">Method comparison (informational)</span>
+                {Object.entries(y.comparison).map(([m,t])=>(
+                  <span key={m} className={`num ${m===y.method?"text-ink font-medium":""}`}>
+                    {m} <span className="text-ink3 ml-1">{czk(t)}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+      </div>
+    </Card>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────
+   SALES REVIEW
+   ────────────────────────────────────────────────────────────── */
+function SalesScreen() {
+  const [sells, setSells] = useState(SELLS);
+  const [selectedId, setSelectedId] = useState(SELLS[0].id);
+  const [filter, setFilter] = useState({ year:"all", status:"all", q:"" });
+
+  const filtered = sells.filter(s => {
+    if (filter.year!=="all" && s.year!==Number(filter.year)) return false;
+    if (filter.status!=="all" && s.review!==filter.status) return false;
+    if (filter.q && !s.ticker.toLowerCase().includes(filter.q.toLowerCase())) return false;
+    return true;
+  });
+
+  const selected = sells.find(s=>s.id===selectedId) || filtered[0];
+  useEffect(()=>{
+    if (selected && !filtered.find(s=>s.id===selected.id) && filtered[0]) setSelectedId(filtered[0].id);
+  }, [filter]); // eslint-disable-line
+
+  const patchSell = (id, p) => setSells(xs => xs.map(s=>s.id===id?{...s,...p}:s));
+
+  return (
+    <div className="h-full flex">
+      {/* LEFT pane */}
+      <div className="w-[340px] border-r border-borderc bg-surface flex flex-col">
+        <div className="px-4 pt-5 pb-3">
+          <div className="text-[11px] uppercase tracking-wider text-ink3 mb-1">Sales Review</div>
+          <div className="text-[17px] font-semibold tracking-tight">Sells — {filtered.length}</div>
+        </div>
+        <div className="px-4 pb-3 space-y-2">
+          <div className="relative">
+            <Icon name="search" className="w-4 h-4 absolute left-2 top-2.5 text-ink3"/>
+            <input placeholder="Ticker…" value={filter.q}
+                   onChange={e=>setFilter(f=>({...f,q:e.target.value}))}
+                   className="w-full border border-borderc rounded-md pl-7 pr-2 py-2 text-sm bg-bg focus-ring"/>
+          </div>
+          <div className="flex gap-1 flex-wrap">
+            {["all",2025,2024,2023].map(y=>(
+              <button key={y} onClick={()=>setFilter(f=>({...f,year:String(y)}))}
+                className={`px-2 py-0.5 rounded-full text-[11px] ${filter.year===String(y)?"bg-accentBg text-accent":"bg-borderc/50 text-ink2"}`}>
+                {y==="all"?"All years":y}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-1">
+            {[["all","All"],["unreviewed","Unreviewed"],["reviewed","Reviewed"],["flagged","Flagged"]].map(([k,v])=>(
+              <button key={k} onClick={()=>setFilter(f=>({...f,status:k}))}
+                className={`px-2 py-0.5 rounded-full text-[11px] ${filter.status===k?"bg-accentBg text-accent":"bg-borderc/50 text-ink2"}`}>
+                {v}
+              </button>
+            ))}
+          </div>
+        </div>
+        <ul className="flex-1 overflow-auto divide-y divide-borderc">
+          {filtered.map(s=>(
+            <li key={s.id}>
+              <button onClick={()=>setSelectedId(s.id)}
+                className={`w-full text-left px-4 py-3 hover:bg-bg focus-ring ${selected?.id===s.id?"bg-accentBg/60":""}`}>
+                <div className="flex items-center gap-2">
+                  <ReviewDot status={s.review}/>
+                  <span className="text-sm font-medium">{s.ticker}</span>
+                  <span className="text-[11px] text-ink3 ml-auto">{s.date}</span>
+                </div>
+                <div className="flex items-center justify-between mt-0.5">
+                  <span className="text-[12px] text-ink2">{s.qty} sh · {s.broker}</span>
+                  <span className="text-[12px] num">{czk(s.proceedsCzk)}</span>
+                </div>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {/* RIGHT pane */}
+      <div className="flex-1 overflow-auto">
+        {selected && <SellDetail sell={selected} onPatch={p=>patchSell(selected.id,p)}/>}
+      </div>
+    </div>
+  );
+}
+
+function ReviewDot({ status }) {
+  const color = { reviewed:"bg-ok", unreviewed:"bg-ink3", flagged:"bg-warn" }[status];
+  return <span className={`inline-block w-2 h-2 rounded-full ${color}`}/>;
+}
+
+function SellDetail({ sell, onPatch }) {
+  const matchedDiff = sell.qty - sell.matchedQty;
+  const totalGain = sell.lots.reduce((a,l)=>a+l.gainCzk,0);
+  return (
+    <div className="max-w-3xl mx-auto px-8 py-8 space-y-5">
+      <SectionHeader
+        title={`${sell.ticker} — ${sell.date}`}
+        subtitle={`Sell evidence packet · ${sell.broker} · ${sell.qty} shares at ${usd(sell.priceUsd)}`}
+        primary={
+          sell.review!=="reviewed"
+            ? <Button onClick={()=>onPatch({review:"reviewed"})}><Icon name="check"/>Mark reviewed</Button>
+            : <Button variant="secondary" onClick={()=>onPatch({review:"unreviewed"})}>Reviewed — undo</Button>
+        }
+        secondary={
+          sell.review!=="flagged"
+            ? <Button variant="ghost" onClick={()=>onPatch({review:"flagged"})}><Icon name="flag"/>Flag</Button>
+            : <Button variant="ghost" onClick={()=>onPatch({review:"unreviewed"})}>Unflag</Button>
+        }
+      />
+
+      {/* Header card */}
+      <Card className="p-5">
+        <div className="grid grid-cols-5 gap-5">
+          <KeyVal label="Quantity">{sell.qty}</KeyVal>
+          <KeyVal label="Sell price">{usd(sell.priceUsd)}</KeyVal>
+          <KeyVal label="Proceeds">{czk(sell.proceedsCzk)}</KeyVal>
+          <KeyVal label="Method">{sell.method}</KeyVal>
+          <KeyVal label="Matched qty">
+            {sell.matchedQty}
+            {matchedDiff!==0 && <Chip tone="warn" className="ml-2">{matchedDiff} sh unmatched</Chip>}
+          </KeyVal>
+        </div>
+        <div className="mt-4 flex items-center gap-2 text-[12px] text-ink2">
+          <Icon name="link" className="w-3.5 h-3.5"/>
+          Source:
+          <span className="font-mono text-ink">{sell.source.file}:row {sell.source.row}</span>
+          <button className="text-accent hover:underline focus-ring">Jump to raw</button>
+          <div className="flex-1"/>
+          <span>Classification: {" "}
+            <Chip tone={sell.classification==="taxable"?"neutral":sell.classification==="exempt"?"ok":"info"}>{sell.classification}</Chip>
+          </span>
+        </div>
+      </Card>
+
+      {/* Matched lots */}
+      <div>
+        <div className="flex items-center gap-2 mb-2">
+          <h2 className="text-sm font-semibold text-ink2">Matched buy lots ({sell.lots.length})</h2>
+          <div className="flex-1"/>
+          <span className="text-[12px] text-ink3 num">Total gain/loss: <span className={totalGain>=0?"text-ok":"text-err"}>{czk(totalGain)}</span></span>
+        </div>
+
+        <div className="space-y-3">
+          {sell.lots.map(l => <BuyLotCard key={l.lot} l={l}/>)}
+        </div>
+      </div>
+
+      {/* Note */}
+      <Card className="p-5">
+        <div className="text-[11px] uppercase tracking-wider text-ink3 mb-2">Reviewer note</div>
+        <textarea
+          placeholder="Add any context for the audit trail…"
+          defaultValue=""
+          rows={2}
+          className="w-full border border-borderc rounded-md px-3 py-2 text-sm bg-surface focus-ring resize-none"/>
+      </Card>
+
+      <div className="flex items-center justify-end gap-2">
+        <Button variant="ghost"><Icon name="download"/>Export this sell</Button>
+      </div>
+    </div>
+  );
+}
+
+function BuyLotCard({ l }) {
+  const tone = l.gainCzk===0 ? "filed" : l.gainCzk>0 ? "neutral" : "neutral";
+  return (
+    <Card className="p-4">
+      <div className="flex items-center gap-3 mb-3">
+        <Icon name="clipboard" className="w-4 h-4 text-ink2"/>
+        <span className="font-mono text-[13px]">{l.lot}</span>
+        <Chip tone="neutral">{l.broker}</Chip>
+        <span className="text-[12px] text-ink3 font-mono">{l.source.file}:row {l.source.row}</span>
+        <div className="flex-1"/>
+        {l.exempt
+          ? <Chip tone="ok"><Icon name="check" className="w-3 h-3"/>3y time test · exempt</Chip>
+          : <Chip tone="neutral">{l.holdingDays} holding days</Chip>}
+      </div>
+      <div className="grid grid-cols-6 gap-3 text-sm">
+        <KeyVal label="Buy date" mono={false}>{l.buyDate}</KeyVal>
+        <KeyVal label="Qty">{l.qty}</KeyVal>
+        <KeyVal label="Buy (USD)">{usd(l.buyUsd)}</KeyVal>
+        <KeyVal label="Sell (USD)">{usd(l.sellUsd)}</KeyVal>
+        <KeyVal label="FX buy / sell">{fxn(l.fxBuy)} / {fxn(l.fxSell)}</KeyVal>
+        <KeyVal label="Gain / loss (CZK)">
+          <span className={l.exempt?"text-filed":l.gainCzk>=0?"text-ok":"text-err"}>{czk(l.gainCzk)}</span>
+        </KeyVal>
+      </div>
+      <div className="grid grid-cols-4 gap-3 text-sm mt-2 pt-3 border-t border-borderc">
+        <KeyVal label="Cost basis">{czk(l.costCzk)}</KeyVal>
+        <KeyVal label="Proceeds">{czk(l.proceedsCzk)}</KeyVal>
+        <KeyVal label="Net (CZK)">{czk(l.proceedsCzk - l.costCzk)}</KeyVal>
+        <div className="flex items-end justify-end">
+          <button className="text-[12px] text-accent hover:underline focus-ring">Open raw CSV row <Icon name="external" className="w-3 h-3 inline"/></button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────
+   OPEN POSITIONS
+   ────────────────────────────────────────────────────────────── */
+function PositionsScreen() {
+  const [expanded, setExpanded] = useState(null);
+  return (
+    <div className="max-w-5xl mx-auto px-8 py-8">
+      <SectionHeader
+        title="Open Positions"
+        subtitle="Does the residual inventory match what you actually hold?"
+      />
+      <div className="space-y-3">
+        {OPEN_POSITIONS.map(p=>(
+          <Card key={p.ticker}>
+            <button onClick={()=>setExpanded(expanded===p.ticker?null:p.ticker)}
+                    className="w-full flex items-center gap-5 px-5 py-4 text-left focus-ring">
+              <div className="w-24">
+                <div className="font-semibold">{p.ticker}</div>
+                <div className="text-[11px] text-ink3">{p.lots.length} open lot{p.lots.length>1?"s":""}</div>
+              </div>
+              <div className="flex-1 grid grid-cols-4 gap-3">
+                <KeyVal label="Calculated">{p.calc}</KeyVal>
+                <KeyVal label="Yahoo">{p.yahoo==null?"—":p.yahoo}</KeyVal>
+                <KeyVal label="Difference">{p.diff==null?"—":(p.diff>0?`+${p.diff}`:p.diff)}</KeyVal>
+                <div className="flex items-center">
+                  {p.status==="ok"      && <Chip tone="ok"><Icon name="check" className="w-3 h-3"/>OK</Chip>}
+                  {p.status==="warn"    && <Chip tone="warn">WARN</Chip>}
+                  {p.status==="error"   && <Chip tone="err">ERROR</Chip>}
+                  {p.status==="unknown" && <Chip tone="filed">UNKNOWN</Chip>}
+                </div>
+              </div>
+              <Icon name={expanded===p.ticker?"chev":"chevR"} className="w-4 h-4 text-ink3"/>
+            </button>
+            {expanded===p.ticker && (
+              <div className="border-t border-borderc px-5 py-4 bg-bg/60">
+                {p.status==="unknown" && (
+                  <div className="mb-3 text-[12px] text-filed italic">
+                    Yahoo did not export a current position for {p.ticker}. Verify this residual with your broker directly.
+                  </div>
+                )}
+                <table className="w-full text-sm">
+                  <thead className="text-[11px] uppercase text-ink3 tracking-wider">
+                    <tr className="text-left border-b border-borderc">
+                      <th className="py-2 font-normal">Lot</th>
+                      <th className="py-2 font-normal">Buy date</th>
+                      <th className="py-2 font-normal">Broker</th>
+                      <th className="py-2 font-normal text-right">Qty</th>
+                      <th className="py-2 font-normal text-right">Cost (CZK)</th>
+                      <th className="py-2 font-normal text-right">Paper P/L</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {p.lots.map(l=>(
+                      <tr key={l.lot} className="border-b border-borderc/60">
+                        <td className="py-2 font-mono text-xs">{l.lot}</td>
+                        <td className="py-2">{l.date}</td>
+                        <td className="py-2">{l.broker}</td>
+                        <td className="py-2 text-right num">{l.qty}</td>
+                        <td className="py-2 text-right num">{czk(l.costCzk)}</td>
+                        <td className="py-2 text-right num">
+                          {l.paperCzk==null
+                            ? <span className="text-ink3">—</span>
+                            : <span className={l.paperCzk>=0?"text-ok":"text-err"}>{czk(l.paperCzk)}</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────
+   FX RATES
+   ────────────────────────────────────────────────────────────── */
+function FxScreen() {
+  const [showMissing, setShowMissing] = useState(false);
+  const visible = showMissing ? FX.filter(f=>f.missing.length>0) : FX;
+  return (
+    <div className="max-w-5xl mx-auto px-8 py-8">
+      <SectionHeader
+        title="FX Rates"
+        subtitle="Every rate used must be defensibly sourced from CNB or GFŘ."
+        primary={<Button><Icon name="download"/>Fetch all missing</Button>}
+        secondary={
+          <label className="flex items-center gap-2 text-sm text-ink2">
+            <input type="checkbox" checked={showMissing} onChange={e=>setShowMissing(e.target.checked)}/>
+            Missing only
+          </label>
+        }
+      />
+
+      <div className="space-y-4">
+        {visible.map(f=>(
+          <Card key={f.year} className={f.locked?"bg-filedBg/30":""}>
+            <div className="flex items-center gap-4 px-5 py-4 border-b border-borderc">
+              <div className="text-[20px] font-semibold tracking-tight w-20">{f.year}</div>
+              <Chip tone="neutral">{f.method==="FX_DAILY_CNB"?"CNB daily":"GFŘ yearly"}</Chip>
+              {f.locked && <Chip tone="filed"><Icon name="lock" className="w-3 h-3"/>Locked</Chip>}
+              {f.missing.length>0 && <Chip tone="warn">{f.missing.length} rates missing</Chip>}
+              {f.verifiedAt && <Chip tone="ok"><Icon name="check" className="w-3 h-3"/>Verified {f.verifiedAt.slice(0,10)}</Chip>}
+              <div className="flex-1"/>
+              {!f.locked && <Button variant="secondary"><Icon name="refresh"/>Fetch / verify</Button>}
+            </div>
+            <div className="px-5 py-4 grid grid-cols-4 gap-4">
+              {f.method==="FX_UNIFIED_GFR"
+                ? <>
+                    <KeyVal label="Unified USD/CZK">{fxn(f.unified)}</KeyVal>
+                    <KeyVal label="Source" mono={false}>{f.source}</KeyVal>
+                    <KeyVal label="Verified" mono={false}>{f.verifiedAt || "—"}</KeyVal>
+                    <KeyVal label="Manual override" mono={false}>{f.manual?"Yes":"No"}</KeyVal>
+                  </>
+                : <>
+                    <KeyVal label="Daily rates cached">{f.dailyCached} / {f.dailyExpected}</KeyVal>
+                    <KeyVal label="Missing">{f.missing.length}</KeyVal>
+                    <KeyVal label="Source" mono={false}>{f.source}</KeyVal>
+                    <KeyVal label="Last fetched" mono={false}>2026-04-24 17:45</KeyVal>
+                  </>}
+            </div>
+            {f.missing.length>0 && (
+              <div className="px-5 pb-4 text-[12px] text-warn">
+                Missing: {f.missing.join(", ")}
+              </div>
+            )}
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────
+   AUDIT PACK
+   ────────────────────────────────────────────────────────────── */
+function AuditScreen() {
+  return (
+    <div className="max-w-5xl mx-auto px-8 py-8">
+      <SectionHeader
+        title="Audit Pack"
+        subtitle="Everything a tax-office check would ask for, traceable end to end."
+      />
+
+      <Card className="p-5 mb-5">
+        <div className="text-[11px] uppercase tracking-wider text-ink3 mb-2">Traceability</div>
+        <TraceDiagram/>
+      </Card>
+
+      <Card className="mb-5">
+        <div className="px-5 py-3 border-b border-borderc text-sm font-medium">Yearly summary</div>
+        <table className="w-full text-sm">
+          <thead className="text-[11px] uppercase text-ink3 tracking-wider">
+            <tr className="text-left">
+              <th className="px-5 py-2 font-normal">Year</th>
+              <th className="px-5 py-2 font-normal">Method</th>
+              <th className="px-5 py-2 font-normal">FX</th>
+              <th className="px-5 py-2 font-normal text-right">Proceeds</th>
+              <th className="px-5 py-2 font-normal text-right">Taxable base</th>
+              <th className="px-5 py-2 font-normal text-right">Tax</th>
+              <th className="px-5 py-2 font-normal">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {YEARS.map(y=>(
+              <tr key={y.year} className="border-t border-borderc/60">
+                <td className="px-5 py-2 font-semibold">{y.year}</td>
+                <td className="px-5 py-2">{y.method}</td>
+                <td className="px-5 py-2">{y.fx==="FX_DAILY_CNB"?"CNB daily":"GFŘ yearly"}</td>
+                <td className="px-5 py-2 text-right num">{czk(y.proceeds)}</td>
+                <td className="px-5 py-2 text-right num">{czk(y.base)}</td>
+                <td className="px-5 py-2 text-right num font-medium">{czk(y.tax)}</td>
+                <td className="px-5 py-2">
+                  {y.locked
+                    ? <Chip tone="filed"><Icon name="lock" className="w-3 h-3"/>Locked</Chip>
+                    : <Chip tone="neutral">Draft</Chip>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+
+      <h2 className="text-sm font-semibold text-ink2 mb-3">Export</h2>
+      <div className="grid grid-cols-2 gap-3 mb-6">
+        <ExportRow title="Excel workbook"      desc="The canonical 29-sheet workbook, rebuilt from current data." icon="file"/>
+        <ExportRow title="PDF audit report"    desc="Human-readable report: yearly summaries, FX sources, methods." icon="file"/>
+        <ExportRow title="CSV lot matching"    desc="Flat ledger of every (sell, buy lot) pair with source refs." icon="download"/>
+        <ExportRow title="ZIP evidence pack"   desc="Workbook + PDF + CSV + original CSVs + FX cache snapshot." icon="download"/>
+      </div>
+
+      <h2 className="text-sm font-semibold text-ink2 mb-3">Locked snapshots</h2>
+      <Card>
+        <ul className="divide-y divide-borderc">
+          {YEARS.filter(y=>y.locked).map(y=>(
+            <li key={y.year} className="flex items-center gap-4 px-5 py-3">
+              <Icon name="lock" className="w-4 h-4 text-filed"/>
+              <span className="font-semibold w-16">{y.year}</span>
+              <span className="text-sm text-ink2">{y.method} · locked 2025-02-14</span>
+              <span className="flex-1"/>
+              <Button variant="ghost"><Icon name="download"/>Re-export snapshot</Button>
+            </li>
+          ))}
+        </ul>
+      </Card>
+    </div>
+  );
+}
+
+function TraceDiagram() {
+  const steps = [
+    { label:"Yearly summary", sub:"5 years" },
+    { label:"Sell",            sub:`${SELLS.length} sells` },
+    { label:"Buy lots",        sub:`${SELLS.reduce((a,s)=>a+s.lots.length,0)} matched` },
+    { label:"Source CSV row",  sub:`${FILES.reduce((a,f)=>a+f.trades,0).toLocaleString()} rows` },
+    { label:"FX source",       sub:"CNB / GFŘ" },
+  ];
+  return (
+    <div className="flex items-center gap-2">
+      {steps.map((s,i)=>(
+        <React.Fragment key={i}>
+          <div className="flex-1 text-center border border-borderc rounded-lg py-3 px-2 bg-surface">
+            <div className="text-[12px] font-medium">{s.label}</div>
+            <div className="text-[11px] text-ink3 mt-0.5">{s.sub}</div>
+          </div>
+          {i<steps.length-1 && <Icon name="chevR" className="w-4 h-4 text-ink3 shrink-0"/>}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+function ExportRow({ title, desc, icon }) {
+  return (
+    <Card className="p-4 flex items-center gap-3">
+      <div className="w-9 h-9 rounded-md bg-accentBg text-accent grid place-items-center"><Icon name={icon} className="w-4 h-4"/></div>
+      <div className="flex-1">
+        <div className="text-sm font-medium">{title}</div>
+        <div className="text-[12px] text-ink3">{desc}</div>
+      </div>
+      <Button variant="secondary"><Icon name="download"/>Export</Button>
+    </Card>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────
+   SETTINGS
+   ────────────────────────────────────────────────────────────── */
+function SettingsScreen() {
+  const [dirty, setDirty] = useState(false);
+  return (
+    <div className="max-w-3xl mx-auto px-8 py-8">
+      <SectionHeader
+        title="Settings"
+        subtitle="Local app configuration. Saved to settings.json next to the workbook."
+        primary={<Button disabled={!dirty}>Save changes</Button>}
+      />
+      <Fieldset title="Paths">
+        <Field label="Project folder"><input defaultValue={PROJECT.path} onChange={()=>setDirty(true)} className={inp}/></Field>
+        <Field label="CSV folder"><input defaultValue={PROJECT.csv_folder} onChange={()=>setDirty(true)} className={inp}/></Field>
+        <Field label="Output workbook"><input defaultValue={PROJECT.output} onChange={()=>setDirty(true)} className={inp}/></Field>
+        <Field label="Cache folder"><input defaultValue="C:\\DATA\\PROJECTS\\STOCKS\\cache" onChange={()=>setDirty(true)} className={inp}/></Field>
+      </Fieldset>
+
+      <Fieldset title="Calculation defaults">
+        <Field label="Default tax rate"><input type="number" step="0.01" defaultValue={0.15} onChange={()=>setDirty(true)} className={inp+" num"}/></Field>
+        <Field label="Default FX method">
+          <select defaultValue="FX_UNIFIED_GFR" onChange={()=>setDirty(true)} className={inp}>
+            <option value="FX_UNIFIED_GFR">GFŘ yearly</option>
+            <option value="FX_DAILY_CNB">CNB daily</option>
+          </select>
+        </Field>
+        <Field label="Default 100k exemption"><select defaultValue="off" onChange={()=>setDirty(true)} className={inp}><option>off</option><option>on</option></select></Field>
+      </Fieldset>
+
+      <Fieldset title="Tolerances">
+        <Field label="Unmatched quantity tolerance (shares)"><input type="number" step="0.0001" defaultValue="0" onChange={()=>setDirty(true)} className={inp+" num"}/></Field>
+        <Field label="Yahoo position reconciliation tolerance (shares)"><input type="number" step="0.0001" defaultValue="0" onChange={()=>setDirty(true)} className={inp+" num"}/></Field>
+      </Fieldset>
+
+      <Fieldset title="Backup & lock policy">
+        <Field label="Backup workbook on every recalculate">
+          <select defaultValue="yes" onChange={()=>setDirty(true)} className={inp}><option>yes</option><option>no</option></select>
+        </Field>
+        <Field label="Require confirmation to unlock a year">
+          <select defaultValue="yes" onChange={()=>setDirty(true)} className={inp}><option>yes</option><option>no</option></select>
+        </Field>
+        <Field label="Keep N snapshots per year"><input type="number" defaultValue={5} onChange={()=>setDirty(true)} className={inp+" num"}/></Field>
+      </Fieldset>
+
+      <Fieldset title="Validation">
+        <Field label="Excel validation">
+          <select defaultValue="warn" onChange={()=>setDirty(true)} className={inp}><option>strict</option><option>warn</option><option>off</option></select>
+        </Field>
+      </Fieldset>
+    </div>
+  );
+}
+const inp = "w-full border border-borderc rounded-md px-2 py-1.5 text-sm bg-surface focus-ring";
+function Fieldset({ title, children }) {
+  return (
+    <section className="mb-6">
+      <h2 className="text-[11px] uppercase tracking-wider text-ink3 mb-2">{title}</h2>
+      <Card className="p-5 space-y-4">{children}</Card>
+    </section>
+  );
+}
+function Field({ label, children }) {
+  return (
+    <label className="block">
+      <div className="text-[12px] text-ink2 mb-1">{label}</div>
+      {children}
+    </label>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────
+   App shell
+   ────────────────────────────────────────────────────────────── */
+function App() {
+  const [active, setActive] = useState("overview");
+  const [status, setStatus] = useState("needs_review");
+  const [toast, setToast] = useState(null);
+
+  const handleRecalc = () => {
+    setToast("Recalculating from .csv …");
+    setTimeout(()=>{ setStatus("needs_review"); setToast("Recalculation complete — 2 unresolved checks."); }, 900);
+    setTimeout(()=>setToast(null), 3200);
+  };
+
+  return (
+    <div className="h-full flex bg-bg text-ink">
+      <Sidebar active={active} onGo={setActive}/>
+      <div className="flex-1 flex flex-col min-w-0">
+        <TopBar status={status} onRecalc={handleRecalc} dirty={false}/>
+        <main className="flex-1 min-h-0 overflow-auto">
+          {active==="overview"  && <Overview go={setActive} status={status}/>}
+          {active==="import"    && <ImportScreen/>}
+          {active==="years"     && <YearsScreen/>}
+          {active==="sales"     && <SalesScreen/>}
+          {active==="positions" && <PositionsScreen/>}
+          {active==="fx"        && <FxScreen/>}
+          {active==="audit"     && <AuditScreen/>}
+          {active==="settings"  && <SettingsScreen/>}
+        </main>
+      </div>
+
+      {toast && (
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 bg-surface border border-borderc shadow-soft rounded-lg px-4 py-2 text-sm flex items-center gap-2">
+          <Icon name="refresh" className="w-4 h-4 text-accent"/>
+          {toast}
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
