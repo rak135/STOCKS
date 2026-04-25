@@ -185,7 +185,7 @@ def _append_position_row(
     symbol: str,
     quantity: float,
     csv_name: str = "Trading212.csv",
-) -> None:
+) -> int:
     csv_path = project / ".csv" / csv_name
     raw = csv_path.read_text(encoding="utf-8")
     lines = raw.splitlines()
@@ -200,12 +200,50 @@ def _append_position_row(
         values["Quantity"] = f"{quantity:.8f}".rstrip("0").rstrip(".")
     if "Current Price" in values:
         values["Current Price"] = "0"
+    if "Date" in values:
+        values["Date"] = ""
+    if "Time" in values:
+        values["Time"] = ""
 
     row = ",".join(str(values.get(header, "")) for header in headers)
     with csv_path.open("a", encoding="utf-8", newline="\n") as fh:
         if raw and not raw.endswith("\n"):
             fh.write("\n")
         fh.write(row)
+    return len(lines) + 1
+
+
+def _append_position_row_with_snapshot(
+    project: Path,
+    *,
+    symbol: str,
+    quantity: float,
+    snapshot_date: str,
+    snapshot_time: str = "16:00 EDT",
+    csv_name: str = "Trading212.csv",
+) -> int:
+    csv_path = project / ".csv" / csv_name
+    raw = csv_path.read_text(encoding="utf-8")
+    lines = raw.splitlines()
+    if not lines:
+        raise AssertionError(f"CSV fixture {csv_name} is empty")
+
+    headers = [value.strip() for value in lines[0].split(",")]
+    values = {header: "" for header in headers}
+    values["Symbol"] = symbol
+    values["Quantity"] = f"{quantity:.8f}".rstrip("0").rstrip(".")
+    values["Current Price"] = "0"
+    if "Date" in values:
+        values["Date"] = snapshot_date
+    if "Time" in values:
+        values["Time"] = snapshot_time
+
+    row = ",".join(str(values.get(header, "")) for header in headers)
+    with csv_path.open("a", encoding="utf-8", newline="\n") as fh:
+        if raw and not raw.endswith("\n"):
+            fh.write("\n")
+        fh.write(row)
+    return len(lines) + 1
 
 
 def _first_unknown_open_position(client: TestClient) -> dict:
@@ -839,10 +877,11 @@ def test_open_positions_exact_match_is_ok_and_ready(tmp_path):
     baseline_client = TestClient(create_app(project_dir=project))
     baseline_unknown = _first_unknown_open_position(baseline_client)
 
-    _append_position_row(
+    source_row = _append_position_row_with_snapshot(
         project,
         symbol=baseline_unknown["ticker"],
         quantity=float(baseline_unknown["calculated_qty"]),
+        snapshot_date="2026/04/23",
     )
 
     client = TestClient(create_app(project_dir=project))
@@ -857,6 +896,14 @@ def test_open_positions_exact_match_is_ok_and_ready(tmp_path):
     assert row["difference"] == pytest.approx(0.0)
     assert row["status_reason_code"] == "reconciled_within_tolerance"
     assert row["tolerance"] == pytest.approx(1e-4)
+    assert row["reported_position_source_file"] == "Trading212.csv"
+    assert row["reported_position_source_row"] == source_row
+    assert row["reported_position_broker"] == "Trading212"
+    assert row["reported_position_account"] is None
+    assert row["reported_position_snapshot_date"] == "2026-04-23"
+    assert row["reported_position_source_status"] == "ready"
+    assert row["reported_position_source_reason"] is None
+    assert row["reported_position_source_count"] == 1
     assert body["truth"]["status"] in {"ready", "partial", "needs_review"}
 
 
@@ -867,10 +914,11 @@ def test_open_positions_warn_difference_creates_needs_review_and_status_check(tm
     calculated_qty = float(baseline_unknown["calculated_qty"])
     reported_qty = calculated_qty - 0.005
 
-    _append_position_row(
+    _append_position_row_with_snapshot(
         project,
         symbol=baseline_unknown["ticker"],
         quantity=reported_qty,
+        snapshot_date="2026/04/23",
     )
 
     client = TestClient(create_app(project_dir=project))
@@ -900,10 +948,11 @@ def test_open_positions_material_difference_blocks_collection_and_surfaces_audit
     calculated_qty = float(baseline_unknown["calculated_qty"])
     reported_qty = calculated_qty - 0.5
 
-    _append_position_row(
+    _append_position_row_with_snapshot(
         project,
         symbol=baseline_unknown["ticker"],
         quantity=reported_qty,
+        snapshot_date="2026/04/23",
     )
 
     client = TestClient(create_app(project_dir=project))
@@ -956,7 +1005,12 @@ def test_open_positions_tolerance_behavior_ok_vs_warn(tmp_path):
     ok_baseline_client = TestClient(create_app(project_dir=project_ok))
     ok_unknown = _first_unknown_open_position(ok_baseline_client)
     ok_calculated_qty = float(ok_unknown["calculated_qty"])
-    _append_position_row(project_ok, symbol=ok_unknown["ticker"], quantity=ok_calculated_qty - 0.00005)
+    _append_position_row_with_snapshot(
+        project_ok,
+        symbol=ok_unknown["ticker"],
+        quantity=ok_calculated_qty - 0.00005,
+        snapshot_date="2026/04/23",
+    )
 
     ok_client = TestClient(create_app(project_dir=project_ok))
     ok_response = ok_client.get("/api/open-positions")
@@ -973,7 +1027,12 @@ def test_open_positions_tolerance_behavior_ok_vs_warn(tmp_path):
     warn_baseline_client = TestClient(create_app(project_dir=project_warn))
     warn_unknown = _first_unknown_open_position(warn_baseline_client)
     warn_calculated_qty = float(warn_unknown["calculated_qty"])
-    _append_position_row(project_warn, symbol=warn_unknown["ticker"], quantity=warn_calculated_qty - 0.005)
+    _append_position_row_with_snapshot(
+        project_warn,
+        symbol=warn_unknown["ticker"],
+        quantity=warn_calculated_qty - 0.005,
+        snapshot_date="2026/04/23",
+    )
 
     warn_client = TestClient(create_app(project_dir=project_warn))
     warn_response = warn_client.get("/api/open-positions")
@@ -983,6 +1042,263 @@ def test_open_positions_tolerance_behavior_ok_vs_warn(tmp_path):
 
     assert warn_row["status"] == "warn"
     assert abs(float(warn_row["difference"])) > float(warn_row["tolerance"])
+
+
+def test_open_positions_provenance_missing_snapshot_date_is_honest(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline_client = TestClient(create_app(project_dir=project))
+    baseline_unknown = _first_unknown_open_position(baseline_client)
+
+    source_row = _append_position_row(
+        project,
+        symbol=baseline_unknown["ticker"],
+        quantity=float(baseline_unknown["calculated_qty"]),
+    )
+
+    client = TestClient(create_app(project_dir=project))
+    positions = client.get("/api/open-positions")
+    assert positions.status_code == 200
+    body = positions.json()
+
+    row = next(item for item in body["items"] if item["instrument_id"] == baseline_unknown["instrument_id"])
+    assert row["status"] == "ok"
+    assert row["reported_position_source_file"] == "Trading212.csv"
+    assert row["reported_position_source_row"] == source_row
+    assert row["reported_position_snapshot_date"] is None
+    assert row["reported_position_source_status"] == "partial"
+    assert row["reported_position_source_reason"]
+    assert "Snapshot date is unavailable" in row["reported_position_source_reason"]
+    assert row["truth_status"] == "needs_review"
+    assert row["status_reason_code"] == "reported_position_source_needs_review"
+
+
+def test_open_positions_multiple_reported_rows_expose_ambiguity_and_source_count(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline_client = TestClient(create_app(project_dir=project))
+    baseline_unknown = _first_unknown_open_position(baseline_client)
+    calculated_qty = float(baseline_unknown["calculated_qty"])
+
+    _append_position_row_with_snapshot(
+        project,
+        symbol=baseline_unknown["ticker"],
+        quantity=calculated_qty / 2,
+        snapshot_date="2026/04/23",
+    )
+    _append_position_row_with_snapshot(
+        project,
+        symbol=baseline_unknown["ticker"],
+        quantity=calculated_qty / 2,
+        snapshot_date="2026/04/23",
+    )
+
+    client = TestClient(create_app(project_dir=project))
+    positions = client.get("/api/open-positions")
+    assert positions.status_code == 200
+    body = positions.json()
+
+    row = next(item for item in body["items"] if item["instrument_id"] == baseline_unknown["instrument_id"])
+    assert row["status"] == "ok"
+    assert row["difference"] == pytest.approx(0.0)
+    assert row["reported_position_source_count"] == 2
+    assert row["reported_position_source_status"] == "partial"
+    assert row["reported_position_source_reason"]
+    assert "aggregated from 2 source rows" in row["reported_position_source_reason"]
+    assert len(row["reported_position_sources"]) == 2
+
+
+def test_status_and_audit_include_provenance_checks_for_quantity_match(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline_client = TestClient(create_app(project_dir=project))
+    baseline_unknown = _first_unknown_open_position(baseline_client)
+
+    _append_position_row(
+        project,
+        symbol=baseline_unknown["ticker"],
+        quantity=float(baseline_unknown["calculated_qty"]),
+    )
+
+    client = TestClient(create_app(project_dir=project))
+    status = client.get("/api/status")
+    assert status.status_code == 200
+    status_body = status.json()
+    assert any(
+        check["id"].startswith("open-position-") and "provenance" in check["message"].lower()
+        for check in status_body["unresolved_checks"]
+    )
+
+    audit = client.get("/api/audit")
+    assert audit.status_code == 200
+    audit_body = audit.json()
+    assert any(reason["code"].startswith("open_position_provenance_") for reason in audit_body["status_reasons"])
+
+
+def test_settings_domain_source_reports_project_state_corporate_actions(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline = run(project_dir=project, write_workbook=False)
+    target = next(pos for pos in baseline.open_positions.items if float(pos.calculated_qty) > 0)
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            corporate_actions=[
+                {
+                    "action_id": "ca-domain-source",
+                    "action_type": "split",
+                    "effective_date": "2100-01-01",
+                    "instrument_id": target.instrument_id,
+                    "ratio_numerator": 2.0,
+                    "ratio_denominator": 1.0,
+                    "source": "project_state",
+                    "note": "source-check",
+                    "enabled": True,
+                }
+            ]
+        ),
+    )
+
+    client = TestClient(create_app(project_dir=project))
+    settings = client.get("/api/settings")
+    assert settings.status_code == 200
+    body = settings.json()
+    assert body["domain_sources"]["corporate_actions"] == "project_state"
+
+
+def test_invalid_corporate_actions_surface_in_status_and_audit(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            corporate_actions=[
+                {
+                    "action_id": "dup-id",
+                    "action_type": "split",
+                    "effective_date": "bad-date",
+                    "instrument_id": "UNKNOWN_INST",
+                    "ratio_numerator": 0.0,
+                    "ratio_denominator": 1.0,
+                    "enabled": True,
+                },
+                {
+                    "action_id": "unknown-type",
+                    "action_type": "mystery_action",
+                    "effective_date": "2100-01-01",
+                    "instrument_id": "UNKNOWN_INST",
+                    "enabled": True,
+                },
+                {
+                    "action_id": "dup-id",
+                    "action_type": "split",
+                    "effective_date": "2100-01-01",
+                    "instrument_id": "UNKNOWN_INST",
+                    "enabled": True,
+                },
+                {
+                    "action_id": "ticker-missing-target",
+                    "action_type": "ticker_change",
+                    "effective_date": "2100-01-01",
+                    "instrument_id": "UNKNOWN_INST",
+                    "enabled": True,
+                },
+            ]
+        ),
+    )
+
+    client = TestClient(create_app(project_dir=project))
+    status = client.get("/api/status")
+    assert status.status_code == 200
+    status_body = status.json()
+    messages = [check["message"].lower() for check in status_body["unresolved_checks"]]
+
+    assert any("invalid or missing effective date" in message for message in messages)
+    assert any("duplicate action_id" in message for message in messages)
+    assert any("unknown action_type" in message for message in messages)
+    assert any("missing target" in message for message in messages)
+    assert status_body["global_status"] in {"needs_review", "blocked"}
+
+    audit = client.get("/api/audit")
+    assert audit.status_code == 200
+    audit_body = audit.json()
+    assert any(reason["code"] == "corporate_action_checks" for reason in audit_body["status_reasons"])
+
+
+def test_ticker_change_action_moves_open_inventory_identity(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline = run(project_dir=project, write_workbook=False)
+    target = next(pos for pos in baseline.open_positions.items if float(pos.calculated_qty) > 0)
+    renamed_id = f"{target.instrument_id}_RENAMED"
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            corporate_actions=[
+                {
+                    "action_id": "ticker-change",
+                    "action_type": "ticker_change",
+                    "effective_date": "2100-01-01",
+                    "instrument_id": target.instrument_id,
+                    "target_instrument_id": renamed_id,
+                    "ratio_numerator": 1.0,
+                    "ratio_denominator": 1.0,
+                    "enabled": True,
+                }
+            ]
+        ),
+    )
+
+    client = TestClient(create_app(project_dir=project))
+    positions = client.get("/api/open-positions")
+    assert positions.status_code == 200
+    body = positions.json()
+    assert any(item["instrument_id"] == renamed_id for item in body["items"])
+    assert not any(item["instrument_id"] == target.instrument_id for item in body["items"])
+
+
+def test_open_positions_detect_mismatch_after_missing_split_action(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline_client = TestClient(create_app(project_dir=project))
+    baseline_unknown = _first_unknown_open_position(baseline_client)
+    baseline_qty = float(baseline_unknown["calculated_qty"])
+
+    _append_position_row_with_snapshot(
+        project,
+        symbol=baseline_unknown["ticker"],
+        quantity=baseline_qty,
+        snapshot_date="2026/04/23",
+    )
+
+    ok_client = TestClient(create_app(project_dir=project))
+    ok_positions = ok_client.get("/api/open-positions").json()
+    ok_row = next(item for item in ok_positions["items"] if item["instrument_id"] == baseline_unknown["instrument_id"])
+    assert ok_row["status"] == "ok"
+
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            corporate_actions=[
+                {
+                    "action_id": "missing-split",
+                    "action_type": "split",
+                    "effective_date": "2100-01-01",
+                    "instrument_id": baseline_unknown["instrument_id"],
+                    "ratio_numerator": 2.0,
+                    "ratio_denominator": 1.0,
+                    "enabled": True,
+                }
+            ]
+        ),
+    )
+
+    mismatch_client = TestClient(create_app(project_dir=project))
+    mismatch_positions = mismatch_client.get("/api/open-positions")
+    assert mismatch_positions.status_code == 200
+    mismatch_body = mismatch_positions.json()
+    mismatch_row = next(
+        item for item in mismatch_body["items"] if item["instrument_id"] == baseline_unknown["instrument_id"]
+    )
+    assert mismatch_row["status"] in {"warn", "error"}
+
+    status = mismatch_client.get("/api/status")
+    assert status.status_code == 200
+    status_body = status.json()
+    assert any(check["id"].startswith("open-position-") for check in status_body["unresolved_checks"])
 
 
 def test_settings_truth_discloses_display_only_and_domain_ownership(tmp_path):

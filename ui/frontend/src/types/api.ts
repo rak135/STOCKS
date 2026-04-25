@@ -230,6 +230,17 @@ export type OpenLot = {
   unrealised_pl_czk: number | null
 }
 
+export type ReportedPositionSourceStatus = 'ready' | 'partial' | 'unknown'
+
+export type ReportedPositionSource = {
+  source_file: string
+  source_row: number
+  broker: string | null
+  account: string | null
+  snapshot_date: string | null
+  source_type: 'csv_position_row'
+}
+
 export type OpenPosition = {
   ticker: string
   instrument_id: string
@@ -245,6 +256,16 @@ export type OpenPosition = {
   status_reason: string | null
   instrument_map_source: TruthSource
   inventory_source: TruthSource
+  reported_position_source_file: string | null
+  reported_position_source_row: number | null
+  reported_position_broker: string | null
+  reported_position_account: string | null
+  reported_position_snapshot_date: string | null
+  reported_position_source_type: string
+  reported_position_source_status: ReportedPositionSourceStatus
+  reported_position_source_reason: string | null
+  reported_position_source_count: number
+  reported_position_sources: ReportedPositionSource[]
 }
 
 export type OpenPositionList = {

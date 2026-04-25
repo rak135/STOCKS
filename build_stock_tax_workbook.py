@@ -575,6 +575,16 @@ def _to_float(value: Any, default: float) -> float:
         return default
 
 
+def _coerce_float(value: Any) -> Optional[float]:
+    """Return float if parseable, else None. Used where None signals 'not present'."""
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _to_bool(value: Any, default: bool) -> bool:
     if value is None or value == "":
         return default
@@ -720,36 +730,223 @@ def build_locked_years(user_state: Dict[str, Any],
     return out
 
 
-def build_corporate_actions(user_state: Dict[str, Any]
-                            ) -> List[Dict[str, Any]]:
+def _is_blank_corporate_action_row(row: Dict[str, Any]) -> bool:
+    keys = (
+        "Date",
+        "effective_date",
+        "Instrument_ID",
+        "instrument_id",
+        "Action type",
+        "action_type",
+        "Action ID",
+        "action_id",
+        "Notes",
+        "note",
+        "Ratio old",
+        "ratio_denominator",
+        "Ratio new",
+        "ratio_numerator",
+    )
+    for key in keys:
+        value = row.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        return False
+    return True
+
+
+def _corporate_action_issue(
+    *,
+    category: str,
+    detail: str,
+    severity: str,
+    row_index: int,
+) -> Dict[str, Any]:
+    return {
+        "check": category,
+        "detail": detail,
+        "severity": severity,
+        "source_file": "Corporate_Actions",
+        "source_row": row_index,
+    }
+
+
+def _parse_target_from_note(note: str) -> str:
+    marker = "target="
+    lower = note.lower()
+    idx = lower.find(marker)
+    if idx == -1:
+        return ""
+    tail = note[idx + len(marker):].strip()
+    if not tail:
+        return ""
+    return tail.split()[0].strip()
+
+
+def build_corporate_actions(
+    user_state: Dict[str, Any],
+    *,
+    known_instrument_ids: Optional[set[str]] = None,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     out: List[Dict[str, Any]] = []
-    for row in user_state.get("Corporate_Actions", []):
-        d = row.get("Date")
-        if isinstance(d, datetime):
-            d = d.date()
-        elif isinstance(d, str):
-            d = parse_trade_date(d)
-        if not isinstance(d, date):
+    issues: List[Dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    for idx, row in enumerate(user_state.get("Corporate_Actions", []), start=4):
+        if not isinstance(row, dict) or _is_blank_corporate_action_row(row):
             continue
-        inst = (row.get("Instrument_ID") or "").strip()
-        action = (row.get("Action type") or "").strip().upper()
-        if not inst or action not in CA_TYPES:
-            continue
-        try:
-            ratio_old = float(row.get("Ratio old") or 1.0)
-            ratio_new = float(row.get("Ratio new") or 1.0)
-        except (TypeError, ValueError):
-            continue
+
+        action_id = str(row.get("Action ID") or row.get("action_id") or "").strip()
+        action_type = str(row.get("Action type") or row.get("action_type") or "").strip().upper()
+
+        raw_date = row.get("Date")
+        if raw_date is None:
+            raw_date = row.get("effective_date")
+        parsed_date: Optional[date] = None
+        if isinstance(raw_date, datetime):
+            parsed_date = raw_date.date()
+        elif isinstance(raw_date, date):
+            parsed_date = raw_date
+        elif isinstance(raw_date, str):
+            parsed_date = parse_trade_date(raw_date)
+
+        inst = str(
+            row.get("Instrument_ID")
+            or row.get("instrument_id")
+            or row.get("source_symbol")
+            or ""
+        ).strip()
+        target_inst = str(
+            row.get("Target Instrument_ID")
+            or row.get("target_instrument_id")
+            or row.get("target_symbol")
+            or row.get("Target symbol")
+            or ""
+        ).strip()
+
+        note = str(row.get("Notes") or row.get("note") or "").strip()
+        source = str(row.get("Source") or row.get("source") or "").strip()
+        if not target_inst and action_type == "TICKER_CHANGE":
+            target_inst = _parse_target_from_note(note)
+
+        ratio_old = _coerce_float(row.get("Ratio old"))
+        if ratio_old is None:
+            ratio_old = _coerce_float(row.get("ratio_denominator"))
+        ratio_new = _coerce_float(row.get("Ratio new"))
+        if ratio_new is None:
+            ratio_new = _coerce_float(row.get("ratio_numerator"))
+        if ratio_old is None:
+            ratio_old = 1.0
+        if ratio_new is None:
+            ratio_new = 1.0
+
+        enabled = _to_bool(row.get("Applied?") if "Applied?" in row else row.get("enabled"), True)
         cash_in_lieu = _to_float(row.get("Cash in lieu"), 0.0)
-        out.append({
-            "Date": d, "Instrument_ID": inst, "Action type": action,
-            "Ratio old": ratio_old, "Ratio new": ratio_new,
-            "Cash in lieu": cash_in_lieu,
-            "Notes": row.get("Notes") or "",
-            "Applied": _to_bool(row.get("Applied?"), True),
-        })
-    out.sort(key=lambda r: (r["Date"], r["Instrument_ID"]))
-    return out
+
+        if action_id:
+            if action_id in seen_ids:
+                issues.append(
+                    _corporate_action_issue(
+                        category="corporate_action_duplicate_action_id",
+                        detail=f"Duplicate action_id '{action_id}' in Corporate_Actions.",
+                        severity="ERROR",
+                        row_index=idx,
+                    )
+                )
+                continue
+            seen_ids.add(action_id)
+
+        if action_type not in CA_TYPES:
+            issues.append(
+                _corporate_action_issue(
+                    category="corporate_action_unknown_action_type",
+                    detail=f"Unknown action_type '{action_type or '<blank>'}'.",
+                    severity="ERROR",
+                    row_index=idx,
+                )
+            )
+            continue
+
+        if parsed_date is None:
+            issues.append(
+                _corporate_action_issue(
+                    category="corporate_action_invalid_date",
+                    detail="Corporate action has an invalid or missing effective date.",
+                    severity="ERROR",
+                    row_index=idx,
+                )
+            )
+            continue
+
+        if not inst:
+            issues.append(
+                _corporate_action_issue(
+                    category="corporate_action_missing_instrument",
+                    detail="Corporate action is missing Instrument_ID/source symbol.",
+                    severity="ERROR",
+                    row_index=idx,
+                )
+            )
+            continue
+
+        if action_type in ("SPLIT", "REVERSE_SPLIT"):
+            if ratio_old <= 0 or ratio_new <= 0:
+                issues.append(
+                    _corporate_action_issue(
+                        category="corporate_action_invalid_ratio",
+                        detail=(
+                            "Split ratio must be positive and non-zero "
+                            f"(got old={ratio_old}, new={ratio_new})."
+                        ),
+                        severity="ERROR",
+                        row_index=idx,
+                    )
+                )
+                continue
+        if action_type == "TICKER_CHANGE" and not target_inst:
+            issues.append(
+                _corporate_action_issue(
+                    category="corporate_action_missing_target",
+                    detail="Ticker change is missing target instrument/symbol.",
+                    severity="ERROR",
+                    row_index=idx,
+                )
+            )
+            continue
+
+        if enabled and known_instrument_ids and inst not in known_instrument_ids:
+            issues.append(
+                _corporate_action_issue(
+                    category="corporate_action_ambiguous_mapping",
+                    detail=(
+                        f"Corporate action instrument '{inst}' does not match known instrument IDs "
+                        "from transaction data."
+                    ),
+                    severity="WARN",
+                    row_index=idx,
+                )
+            )
+
+        out.append(
+            {
+                "Action_ID": action_id,
+                "Date": parsed_date,
+                "Instrument_ID": inst,
+                "Action type": action_type,
+                "Ratio old": ratio_old,
+                "Ratio new": ratio_new,
+                "Cash in lieu": cash_in_lieu,
+                "Notes": note,
+                "Applied": enabled,
+                "Target Instrument_ID": target_inst,
+                "Source": source,
+            }
+        )
+
+    out.sort(key=lambda r: (r["Date"], r["Instrument_ID"], r.get("Action_ID") or ""))
+    return out, issues
 
 
 def load_frozen_inventory(user_state: Dict[str, Any]
@@ -1053,17 +1250,32 @@ def collect_required_fx_problems(
 # Corporate actions application
 # -----------------------------------------------------------------------
 
-def apply_split_to_lots(lots: List[Lot], action: Dict[str, Any]) -> None:
-    """Adjust lot quantity/price per share for a split.
-
-    total cost basis unchanged; per-share price divided by factor.
-    """
+def apply_corporate_action_to_lots(lots: List[Lot], action: Dict[str, Any]) -> None:
+    """Apply a supported corporate action to open lots in place."""
     inst = action["Instrument_ID"]
     action_date = action["Date"]
+    action_type = str(action.get("Action type") or "").strip().upper()
+
+    if action_type == "TICKER_CHANGE":
+        target_inst = str(action.get("Target Instrument_ID") or "").strip()
+        if not target_inst:
+            return
+        for lot in lots:
+            if lot.instrument_id != inst:
+                continue
+            if lot.buy_date > action_date:
+                continue
+            if lot.quantity_remaining <= 0:
+                continue
+            lot.instrument_id = target_inst
+            lot.adjustments.append(f"TICKER_CHANGE {inst}->{target_inst} on {action_date}")
+        return
+
     ratio_old = action["Ratio old"]
     ratio_new = action["Ratio new"]
     if ratio_old <= 0 or ratio_new <= 0:
         return
+
     # e.g. 2-for-1 split: ratio_old=1, ratio_new=2 -> factor=2
     factor = ratio_new / ratio_old
     if factor == 1.0:
@@ -1079,7 +1291,7 @@ def apply_split_to_lots(lots: List[Lot], action: Dict[str, Any]) -> None:
         lot.quantity_original *= factor
         lot.price_per_share_usd /= factor
         lot.adjustments.append(
-            f"{action['Action type']} {ratio_old}:{ratio_new} on {action_date}")
+            f"{action_type} {ratio_old}:{ratio_new} on {action_date}")
 
 
 # -----------------------------------------------------------------------
@@ -1488,7 +1700,7 @@ def simulate(
     for ca in corporate_actions:
         if seed_year is None or ca["Date"].year > seed_year:
             continue
-        apply_split_to_lots(lots, ca)
+        apply_corporate_action_to_lots(lots, ca)
 
     year_end_inventory: Dict[int, List[Lot]] = {}
 
@@ -1579,7 +1791,7 @@ def simulate(
 
         if kind == "CA":
             if item.get("Applied", True):
-                apply_split_to_lots(lots, item)
+                apply_corporate_action_to_lots(lots, item)
             continue
         # kind == "TX"
         tx: Transaction = item
@@ -1852,7 +2064,7 @@ def build_open_position_rows(
     ok_tolerance: float = 1e-4,
     warn_tolerance: float = 1e-2,
 ) -> List[Dict[str, Any]]:
-    yahoo = extract_position_rows(raw_rows, instrument_map)
+    yahoo, position_provenance = extract_position_rows_with_provenance(raw_rows, instrument_map)
     calc: Dict[str, float] = defaultdict(float)
     for lot in lots:
         if lot.quantity_remaining > 1e-9:
@@ -1862,6 +2074,29 @@ def build_open_position_rows(
     for inst in instruments:
         yq = yahoo.get(inst)
         cq = calc.get(inst, 0.0)
+        sources = position_provenance.get(inst, [])
+        source_count = len(sources)
+        primary_source = sources[0] if sources else {}
+
+        if yq is None:
+            source_status = "unknown"
+            source_reason = "No broker/Yahoo position row is available for this instrument."
+        else:
+            source_status = "ready"
+            source_reason_parts: List[str] = []
+            missing_snapshot_dates = [src for src in sources if src.get("snapshot_date") is None]
+            if missing_snapshot_dates:
+                source_status = "partial"
+                source_reason_parts.append(
+                    "Snapshot date is unavailable in one or more source rows."
+                )
+            if source_count > 1:
+                source_status = "partial"
+                source_reason_parts.append(
+                    f"Reported quantity is aggregated from {source_count} source rows."
+                )
+            source_reason = " ".join(source_reason_parts) if source_reason_parts else None
+
         if yq is None:
             diff = None
             status = "UNKNOWN"
@@ -1877,6 +2112,18 @@ def build_open_position_rows(
             "Calculated qty": cq,
             "Difference": diff,
             "Status": status,
+            "Reported position source file": primary_source.get("source_file"),
+            "Reported position source row": primary_source.get("source_row"),
+            "Reported position broker": primary_source.get("broker"),
+            "Reported position account": primary_source.get("account"),
+            "Reported position snapshot date": primary_source.get("snapshot_date"),
+            "Reported position source type": (
+                primary_source.get("source_type") if sources else "csv_position_row"
+            ),
+            "Reported position source status": source_status,
+            "Reported position source reason": source_reason,
+            "Reported position source count": source_count,
+            "Reported position sources": sources,
         })
     return rows
 
@@ -2096,7 +2343,11 @@ def calculate_workbook_data(
     apply_instrument_map(txs, instrument_map)
     fx_yearly, fx_daily, fx_yearly_sources, fx_yearly_manual, fx_daily_sources = build_fx_tables(user_state, years)
     locked_years = build_locked_years(user_state, years)
-    corporate_actions = build_corporate_actions(user_state)
+    corporate_actions, corporate_action_issues = build_corporate_actions(
+        user_state,
+        known_instrument_ids={t.instrument_id for t in txs if t.instrument_id},
+    )
+    problems.extend(corporate_action_issues)
     frozen_inventory = load_frozen_inventory(user_state)
     frozen_matching = load_frozen_matching(user_state)
     frozen_snapshots = load_frozen_snapshots(user_state)
@@ -3211,7 +3462,17 @@ def extract_position_rows(
     instrument_map: Dict[str, Dict[str, str]],
 ) -> Dict[str, float]:
     """Extract Yahoo position rows (no Trade Date/Tx Type, has Quantity)."""
+    out, _ = extract_position_rows_with_provenance(raw_rows, instrument_map)
+    return out
+
+
+def extract_position_rows_with_provenance(
+    raw_rows: List[RawRow],
+    instrument_map: Dict[str, Dict[str, str]],
+) -> Tuple[Dict[str, float], Dict[str, List[Dict[str, Any]]]]:
+    """Extract Yahoo position rows plus source provenance by instrument."""
     out: Dict[str, float] = defaultdict(float)
+    provenance: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for raw in raw_rows:
         tt = (raw.data.get("Transaction Type") or "").strip()
         td = (raw.data.get("Trade Date") or "").strip()
@@ -3226,7 +3487,18 @@ def extract_position_rows(
         if not inst:
             continue
         out[inst] += qty
-    return dict(out)
+        snapshot_date = parse_trade_date((raw.data.get("Date") or "").strip())
+        provenance[inst].append(
+            {
+                "source_file": raw.source_file,
+                "source_row": raw.source_row,
+                "broker": raw.source_broker or None,
+                "account": raw.source_account or None,
+                "snapshot_date": snapshot_date,
+                "source_type": "csv_position_row",
+            }
+        )
+    return dict(out), dict(provenance)
 
 
 def _write_sell_review(

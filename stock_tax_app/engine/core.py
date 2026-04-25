@@ -39,7 +39,6 @@ from .models import (
 
 FRONTEND_READY_HREFS = frozenset({"/", "/import", "/tax-years"})
 WORKBOOK_BACKED_DOMAINS = (
-    "corporate_actions",
     "locked_years",
     "frozen_inventory",
     "frozen_lot_matching",
@@ -139,6 +138,16 @@ def _legacy_has_instrument_map_row(legacy_user_state: dict[str, Any], symbol: st
         str(row.get("Yahoo Symbol") or "").strip() == symbol
         for row in _legacy_rows(legacy_user_state, "Instrument_Map")
     )
+
+
+def _legacy_has_corporate_action_rows(legacy_user_state: dict[str, Any]) -> bool:
+    for row in _legacy_rows(legacy_user_state, "Corporate_Actions"):
+        if any(
+            row.get(key) not in (None, "")
+            for key in ("Date", "Instrument_ID", "Action type", "Notes", "Ratio old", "Ratio new")
+        ):
+            return True
+    return False
 
 
 def _legacy_daily_dates_for_year(legacy_user_state: dict[str, Any], year: int) -> set[str]:
@@ -284,6 +293,14 @@ def _instrument_map_source(project_state: Any, legacy_user_state: dict[str, Any]
     if _legacy_has_instrument_map_row(legacy_user_state, symbol):
         return "workbook_fallback"
     return "generated_default"
+
+
+def _corporate_actions_source(project_state: Any, legacy_user_state: dict[str, Any]) -> str:
+    if getattr(project_state, "corporate_actions", None):
+        return "project_state"
+    if _legacy_has_corporate_action_rows(legacy_user_state):
+        return "workbook_fallback"
+    return "workbook_fallback"
 
 
 def _daily_rate_source(
@@ -759,6 +776,12 @@ def _build_open_positions(
             else None
         )
         difference = float(row["Difference"]) if row.get("Difference") is not None else None
+        source_status = str(row.get("Reported position source status") or "unknown").lower()
+        source_reason = row.get("Reported position source reason")
+        source_count = int(row.get("Reported position source count") or 0)
+        source_type = str(row.get("Reported position source type") or "csv_position_row")
+        source_rows = row.get("Reported position sources") or []
+        snapshot_date = row.get("Reported position snapshot date")
         reason_code = None
         reason = None
         truth_status = "ready"
@@ -779,6 +802,13 @@ def _build_open_positions(
                 "Calculated and reported quantities reconcile within the configured tolerance "
                 f"({ok_tolerance:.6g})."
             )
+            if source_status in {"partial", "unknown"}:
+                truth_status = "needs_review"
+                reason_code = "reported_position_source_needs_review"
+                reason = (
+                    "Quantity matches, but reported-position provenance is not fully ready. "
+                    + (str(source_reason) if source_reason else "")
+                ).strip()
         elif status == "warn":
             truth_status = "needs_review"
             reason_code = "difference_above_tolerance"
@@ -800,6 +830,12 @@ def _build_open_positions(
             reason_code = "unknown_status"
             reason = f"Unrecognized open-position status '{status}'."
 
+        if source_status in {"partial", "unknown"} and status != "unknown":
+            if not reason_code or reason_code == "reconciled_within_tolerance":
+                reason_code = "reported_position_source_needs_review"
+            if source_reason:
+                reason = f"{reason} {source_reason}".strip() if reason else str(source_reason)
+
         positions.append(
             OpenPosition(
                 ticker=ticker,
@@ -816,6 +852,18 @@ def _build_open_positions(
                 status_reason=reason,
                 instrument_map_source=instrument_source,
                 inventory_source="calculated",
+                reported_position_source_file=row.get("Reported position source file"),
+                reported_position_source_row=row.get("Reported position source row"),
+                reported_position_broker=row.get("Reported position broker"),
+                reported_position_account=row.get("Reported position account"),
+                reported_position_snapshot_date=snapshot_date,
+                reported_position_source_type=source_type,
+                reported_position_source_status=(
+                    source_status if source_status in {"ready", "partial", "unknown"} else "unknown"
+                ),
+                reported_position_source_reason=(str(source_reason) if source_reason else None),
+                reported_position_source_count=source_count,
+                reported_position_sources=source_rows,
             )
         )
 
@@ -850,6 +898,13 @@ def _build_open_positions(
                 "Some open-position differences exceed tolerance and require operator review.",
             )
         )
+    if any(position.reported_position_source_status in {"partial", "unknown"} for position in positions):
+        reasons.append(
+            _reason(
+                "reported_position_provenance_needs_review",
+                "Reported-position provenance is partial/unknown for one or more instruments.",
+            )
+        )
     return OpenPositionList(
         items=positions,
         truth=_collection_truth(
@@ -871,10 +926,15 @@ def _build_open_positions(
 def _open_position_discrepancy_checks(open_positions: OpenPositionList) -> list[Check]:
     checks: list[Check] = []
     for index, position in enumerate(open_positions.items, start=1):
-        if position.status == "ok":
+        if position.status == "ok" and position.reported_position_source_status == "ready":
             continue
         level = "error" if position.status == "error" else "warn"
         reason = position.status_reason or "Open-position reconciliation issue."
+        if position.status == "ok" and position.reported_position_source_status in {"partial", "unknown"}:
+            reason = "Reported-position provenance: " + (
+                position.reported_position_source_reason
+                or "Reported-position provenance is not fully ready for reconciliation evidence."
+            )
         checks.append(
             Check(
                 id=f"open-position-{index}",
@@ -974,7 +1034,13 @@ def _build_fx_years(
     )
 
 
-def _build_settings(project_dir: Path, csv_dir: Path, output_path: Path) -> AppSettings:
+def _build_settings(
+    project_dir: Path,
+    csv_dir: Path,
+    output_path: Path,
+    project_state: Any,
+    legacy_user_state: dict[str, Any],
+) -> AppSettings:
     field_names = [
         "project_folder",
         "csv_folder",
@@ -1028,7 +1094,7 @@ def _build_settings(project_dir: Path, csv_dir: Path, output_path: Path) -> AppS
             "fx_daily": "project_state",
             "instrument_map": "project_state",
             "review_state": "ui_state",
-            "corporate_actions": "workbook_fallback",
+            "corporate_actions": _corporate_actions_source(project_state, legacy_user_state),
             "locked_years": "workbook_fallback",
             "frozen_inventory": "workbook_fallback",
             "frozen_snapshots": "workbook_fallback",
@@ -1072,14 +1138,48 @@ def _build_audit_summary(
             )
         )
         for row in open_positions.items:
-            if row.status == "ok":
+            if row.status == "ok" and row.reported_position_source_status == "ready":
                 continue
+            row_kind = (
+                "provenance"
+                if row.status == "ok" and row.reported_position_source_status in {"partial", "unknown"}
+                else row.status
+            )
             reasons.append(
                 _reason(
-                    f"open_position_{row.status}_{row.instrument_id}",
+                    f"open_position_{row_kind}_{row.instrument_id}",
                     f"{row.ticker} ({row.instrument_id}): {row.status_reason or 'open-position issue.'}",
                 )
             )
+
+    corporate_issues = [
+        row
+        for row in calc.problems
+        if str(row.get("check") or "").startswith("corporate_action_")
+    ]
+    corporate_error_count = sum(
+        1 for row in corporate_issues if str(row.get("severity") or "").upper() == "ERROR"
+    )
+    corporate_warn_count = sum(
+        1 for row in corporate_issues if str(row.get("severity") or "").upper() == "WARN"
+    )
+    if calc.corporate_actions:
+        reasons.append(
+            _reason(
+                "corporate_actions_present",
+                f"Effective corporate actions in scope: {len(calc.corporate_actions)}.",
+            )
+        )
+    if corporate_issues:
+        reasons.append(
+            _reason(
+                "corporate_action_checks",
+                (
+                    "Corporate action checks reported "
+                    f"{corporate_error_count} error(s) and {corporate_warn_count} warning(s)."
+                ),
+            )
+        )
 
     truth_status = "partial"
     if calc.calculation_blocked or open_positions.truth.status == "blocked":
@@ -1185,7 +1285,7 @@ def run(
     sales = _build_sales(calc, state, project_state, legacy_user_state, unresolved_checks)
     open_positions = _build_open_positions(calc, project_state, legacy_user_state, unresolved_checks)
     fx_years = _build_fx_years(calc, project_state, legacy_user_state, unresolved_checks)
-    settings = _build_settings(project_path, csv_path, output)
+    settings = _build_settings(project_path, csv_path, output, project_state, legacy_user_state)
     audit_summary = _build_audit_summary(calc, tax_years, open_positions)
     app_status = _build_status(project_path, csv_path, output, unresolved_checks, open_positions)
 

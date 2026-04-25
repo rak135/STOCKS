@@ -18,6 +18,7 @@ import type {
   OpenLot,
   OpenPosition,
   OpenPositionStatus,
+  ReportedPositionSourceStatus,
   TruthSource,
   TruthStatus,
 } from '../types/api'
@@ -52,6 +53,18 @@ const statusLabel: Record<OpenPositionStatus, string> = {
   warn: 'WARN',
   error: 'ERROR',
   unknown: 'UNKNOWN',
+}
+
+const reportedSourceTone: Record<ReportedPositionSourceStatus, 'ok' | 'warn' | 'filed'> = {
+  ready: 'ok',
+  partial: 'warn',
+  unknown: 'filed',
+}
+
+const reportedSourceLabel: Record<ReportedPositionSourceStatus, string> = {
+  ready: 'source ready',
+  partial: 'source partial',
+  unknown: 'source unknown',
 }
 
 const sourceLabels: Record<TruthSource, string> = {
@@ -321,6 +334,12 @@ function PositionCard({
               {p.status === 'ok' ? <CheckIcon className="w-3 h-3" /> : null}
               {statusLabel[p.status]}
             </Chip>
+            <Chip tone={reportedSourceTone[p.reported_position_source_status]}>
+              {reportedSourceLabel[p.reported_position_source_status]}
+            </Chip>
+            {p.reported_position_source_count > 1 ? (
+              <Chip tone="warn">sources: {p.reported_position_source_count}</Chip>
+            ) : null}
             {p.truth_status !== 'ready' ? (
               <Chip tone={truthTone[p.truth_status]}>
                 <StatusDot status={p.truth_status} />
@@ -359,6 +378,18 @@ function PositionCard({
         </div>
       ) : null}
 
+      {p.reported_position_source_status !== 'ready' ? (
+        <div className="px-5 pb-2 -mt-1 text-[12px] text-ink2 flex flex-wrap items-center gap-2">
+          <span className="font-mono bg-surface border border-borderc rounded px-1.5 py-0.5 text-[11px] text-ink2">
+            reported_position_source_{p.reported_position_source_status}
+          </span>
+          <span>
+            {p.reported_position_source_reason ??
+              'Reported-position provenance is not complete enough for full confidence.'}
+          </span>
+        </div>
+      ) : null}
+
       {/* Always-visible per-row provenance chips */}
       <div className="px-5 pb-3 -mt-1 flex flex-wrap items-center gap-1.5">
         <Chip tone={sourceTone[p.instrument_map_source]}>
@@ -371,6 +402,37 @@ function PositionCard({
 
       {expanded ? (
         <div className="border-t border-borderc px-5 py-4 bg-bg/60">
+          <div className="mb-4 text-[12px] text-ink2 space-y-1">
+            <div className="flex flex-wrap gap-2 items-center">
+              <Chip tone={reportedSourceTone[p.reported_position_source_status]}>
+                reported source: {reportedSourceLabel[p.reported_position_source_status]}
+              </Chip>
+              <Chip tone="neutral">type: {p.reported_position_source_type}</Chip>
+              <Chip tone="neutral">count: {p.reported_position_source_count}</Chip>
+            </div>
+            <div>
+              primary source:{' '}
+              {p.reported_position_source_file && p.reported_position_source_row != null
+                ? `${p.reported_position_source_file}:${p.reported_position_source_row}`
+                : '—'}
+              {p.reported_position_broker ? ` · broker ${p.reported_position_broker}` : ''}
+              {p.reported_position_account ? ` · account ${p.reported_position_account}` : ''}
+              {p.reported_position_snapshot_date
+                ? ` · snapshot ${formatDate(p.reported_position_snapshot_date)}`
+                : ' · snapshot unknown'}
+            </div>
+            {p.reported_position_source_reason ? (
+              <div className="text-[12px] text-warn">{p.reported_position_source_reason}</div>
+            ) : null}
+            {p.reported_position_sources.length > 1 ? (
+              <div className="text-[11px] text-ink3">
+                contributing rows:{' '}
+                {p.reported_position_sources
+                  .map((src) => `${src.source_file}:${src.source_row}`)
+                  .join(', ')}
+              </div>
+            ) : null}
+          </div>
           {p.lots.length === 0 ? (
             <div className="text-[13px] text-ink3 italic">Lot detail not available from backend.</div>
           ) : (

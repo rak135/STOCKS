@@ -136,6 +136,63 @@ def _remove_workbook_instrument_map(project: Path, symbol: str) -> None:
     wb.save(workbook_path)
 
 
+def _set_workbook_corporate_action(
+    project: Path,
+    *,
+    effective_date: str,
+    instrument_id: str,
+    action_type: str,
+    ratio_old: float = 1.0,
+    ratio_new: float = 1.0,
+    notes: str = "",
+    applied: bool = True,
+) -> int:
+    workbook_path = project / "stock_tax_system.xlsx"
+    wb = load_workbook(workbook_path)
+    ws = wb["Corporate_Actions"]
+    target_row = None
+    for row in range(4, ws.max_row + 1):
+        if ws.cell(row=row, column=1).value in (None, "") and ws.cell(row=row, column=2).value in (None, ""):
+            target_row = row
+            break
+    if target_row is None:
+        target_row = ws.max_row + 1
+    ws.cell(row=target_row, column=1, value=effective_date)
+    ws.cell(row=target_row, column=2, value=instrument_id)
+    ws.cell(row=target_row, column=3, value=action_type)
+    ws.cell(row=target_row, column=4, value=ratio_old)
+    ws.cell(row=target_row, column=5, value=ratio_new)
+    ws.cell(row=target_row, column=7, value=notes)
+    ws.cell(row=target_row, column=8, value=applied)
+    ws.cell(row=target_row, column=9, value="applied" if applied else "not applied")
+    wb.save(workbook_path)
+    return target_row
+
+
+def _read_workbook_corporate_actions(project: Path) -> list[dict[str, object]]:
+    wb = load_workbook(project / "stock_tax_system.xlsx")
+    ws = wb["Corporate_Actions"]
+    rows: list[dict[str, object]] = []
+    for row in range(4, ws.max_row + 1):
+        date_value = ws.cell(row=row, column=1).value
+        instrument_id = ws.cell(row=row, column=2).value
+        action_type = ws.cell(row=row, column=3).value
+        if not (date_value or instrument_id or action_type):
+            continue
+        rows.append(
+            {
+                "Date": date_value,
+                "Instrument_ID": instrument_id,
+                "Action type": action_type,
+                "Ratio old": ws.cell(row=row, column=4).value,
+                "Ratio new": ws.cell(row=row, column=5).value,
+                "Notes": ws.cell(row=row, column=7).value,
+                "Applied?": ws.cell(row=row, column=8).value,
+            }
+        )
+    return rows
+
+
 def _find_settings_row(project: Path, year: int) -> int | None:
     wb = load_workbook(project / "stock_tax_system.xlsx")
     ws = wb["Settings"]
@@ -197,7 +254,22 @@ def test_project_state_roundtrip(tmp_path):
                 "notes": "state map",
             }
         },
-        corporate_actions=[{"Date": "2025-01-01", "Instrument_ID": "AAPL", "Action type": "SPLIT"}],
+        corporate_actions=[
+            {
+                "action_id": "ca-1",
+                "action_type": "split",
+                "effective_date": "2025-01-01",
+                "instrument_id": "AAPL",
+                "source_symbol": "AAPL",
+                "target_instrument_id": "",
+                "target_symbol": "",
+                "ratio_numerator": 2.0,
+                "ratio_denominator": 1.0,
+                "source": "unit-test",
+                "note": "roundtrip",
+                "enabled": True,
+            }
+        ],
         locked_years={2024: True},
         frozen_inventory={2024: [{"Lot_ID": "L1"}]},
         frozen_lot_matching={2024: [{"Match_ID": "M1"}]},
@@ -619,3 +691,190 @@ def test_workbook_export_reflects_project_state_instrument_map(tmp_path):
     assert ws.cell(row=row, column=3).value == "STATE000SHOP"
     assert ws.cell(row=row, column=4).value == "State SHOP"
     assert ws.cell(row=row, column=5).value == "state map"
+
+
+def test_project_state_corporate_actions_beat_workbook_fallback(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline = run(project_dir=project, write_workbook=False)
+    instrument_id = next(
+        pos.instrument_id for pos in baseline.open_positions.items if float(pos.calculated_qty) > 0
+    )
+    _set_workbook_corporate_action(
+        project,
+        effective_date="2025-01-01",
+        instrument_id=instrument_id,
+        action_type="SPLIT",
+        ratio_old=1.0,
+        ratio_new=2.0,
+        notes="workbook fallback",
+    )
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            corporate_actions=[
+                {
+                    "action_id": "state-split",
+                    "action_type": "split",
+                    "effective_date": "2100-01-01",
+                    "instrument_id": instrument_id,
+                    "ratio_numerator": 3.0,
+                    "ratio_denominator": 1.0,
+                    "source": "project_state",
+                    "note": "state override",
+                    "enabled": True,
+                }
+            ]
+        ),
+    )
+
+    calc = workbook_module.calculate_workbook_data(
+        inputs=sorted((project / ".csv").glob("*.csv")),
+        out_path=project / "stock_tax_system.xlsx",
+        fetch_missing_fx=False,
+    )
+    assert calc.corporate_actions
+    state_row = next(row for row in calc.corporate_actions if row["Instrument_ID"] == instrument_id)
+    assert state_row["Ratio new"] == pytest.approx(3.0)
+    assert state_row["Notes"] == "state override"
+
+
+def test_workbook_corporate_action_fallback_still_works_without_project_state(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline = run(project_dir=project, write_workbook=False)
+    instrument_id = next(
+        pos.instrument_id for pos in baseline.open_positions.items if float(pos.calculated_qty) > 0
+    )
+    _set_workbook_corporate_action(
+        project,
+        effective_date="2100-01-01",
+        instrument_id=instrument_id,
+        action_type="SPLIT",
+        ratio_old=1.0,
+        ratio_new=2.0,
+        notes="workbook only",
+    )
+
+    calc = workbook_module.calculate_workbook_data(
+        inputs=sorted((project / ".csv").glob("*.csv")),
+        out_path=project / "stock_tax_system.xlsx",
+        fetch_missing_fx=False,
+    )
+    assert any(
+        row["Instrument_ID"] == instrument_id
+        and row["Ratio new"] == pytest.approx(2.0)
+        and row["Notes"] == "workbook only"
+        for row in calc.corporate_actions
+    )
+
+
+def test_explicit_legacy_adoption_migrates_corporate_actions_without_overwriting(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline = run(project_dir=project, write_workbook=False)
+    instrument_id = next(
+        pos.instrument_id for pos in baseline.open_positions.items if float(pos.calculated_qty) > 0
+    )
+    _set_workbook_corporate_action(
+        project,
+        effective_date="2100-01-01",
+        instrument_id=instrument_id,
+        action_type="SPLIT",
+        ratio_old=1.0,
+        ratio_new=2.0,
+        notes="legacy ca",
+    )
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            corporate_actions=[
+                {
+                    "action_id": "state-keep",
+                    "action_type": "split",
+                    "effective_date": "2099-01-01",
+                    "instrument_id": instrument_id,
+                    "ratio_numerator": 5.0,
+                    "ratio_denominator": 1.0,
+                    "source": "project_state",
+                    "note": "keep me",
+                    "enabled": True,
+                }
+            ]
+        ),
+    )
+
+    legacy_state = workbook_module.load_existing_user_state(project / "stock_tax_system.xlsx")
+    adopted = project_store.adopt_legacy_workbook_state(project, legacy_state)
+    assert any(action.get("action_id") == "state-keep" for action in adopted.corporate_actions)
+    assert any(action.get("note") == "legacy ca" for action in adopted.corporate_actions)
+
+
+def test_workbook_export_reflects_project_state_corporate_actions(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline = run(project_dir=project, write_workbook=False)
+    instrument_id = next(
+        pos.instrument_id for pos in baseline.open_positions.items if float(pos.calculated_qty) > 0
+    )
+    _set_workbook_corporate_action(
+        project,
+        effective_date="2100-01-01",
+        instrument_id=instrument_id,
+        action_type="SPLIT",
+        ratio_old=1.0,
+        ratio_new=2.0,
+        notes="workbook stale",
+    )
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            corporate_actions=[
+                {
+                    "action_id": "state-export",
+                    "action_type": "split",
+                    "effective_date": "2100-01-01",
+                    "instrument_id": instrument_id,
+                    "ratio_numerator": 4.0,
+                    "ratio_denominator": 1.0,
+                    "source": "project_state",
+                    "note": "state export",
+                    "enabled": True,
+                }
+            ]
+        ),
+    )
+
+    client = TestClient(create_app(project_dir=project))
+    result = client.app.state.runtime.calculate(write_workbook=True)
+    assert result.sales.items
+
+    rows = _read_workbook_corporate_actions(project)
+    row = next(item for item in rows if item["Instrument_ID"] == instrument_id)
+    assert row["Ratio new"] == pytest.approx(4.0)
+    assert row["Notes"] == "state export"
+
+
+def test_valid_split_action_changes_open_inventory_quantities(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline = run(project_dir=project, write_workbook=False)
+    target = next(pos for pos in baseline.open_positions.items if float(pos.calculated_qty) > 0)
+
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            corporate_actions=[
+                {
+                    "action_id": "split-impact",
+                    "action_type": "split",
+                    "effective_date": "2100-01-01",
+                    "instrument_id": target.instrument_id,
+                    "ratio_numerator": 2.0,
+                    "ratio_denominator": 1.0,
+                    "source": "project_state",
+                    "note": "inventory impact",
+                    "enabled": True,
+                }
+            ]
+        ),
+    )
+
+    after = run(project_dir=project, write_workbook=False)
+    updated = next(pos for pos in after.open_positions.items if pos.instrument_id == target.instrument_id)
+    assert float(updated.calculated_qty) == pytest.approx(float(target.calculated_qty) * 2.0)

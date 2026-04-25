@@ -260,6 +260,7 @@ class SellList(ApiModel):
 # ---------------------------------------------------------------------
 
 OpenPositionStatus = Literal["ok", "warn", "error", "unknown"]
+ReportedPositionSourceStatus = Literal["ready", "partial", "unknown"]
 
 
 class OpenLot(ApiModel):
@@ -269,6 +270,15 @@ class OpenLot(ApiModel):
     quantity: float
     cost_basis_czk: float
     unrealised_pl_czk: Optional[float] = None
+
+
+class ReportedPositionSource(ApiModel):
+    source_file: str
+    source_row: int
+    broker: Optional[str] = None
+    account: Optional[str] = None
+    snapshot_date: Optional[date] = None
+    source_type: Literal["csv_position_row"] = "csv_position_row"
 
 
 class OpenPosition(ApiModel):
@@ -286,6 +296,16 @@ class OpenPosition(ApiModel):
     status_reason: Optional[str] = None
     instrument_map_source: TruthSource = "generated_default"
     inventory_source: TruthSource = "calculated"
+    reported_position_source_file: Optional[str] = None
+    reported_position_source_row: Optional[int] = None
+    reported_position_broker: Optional[str] = None
+    reported_position_account: Optional[str] = None
+    reported_position_snapshot_date: Optional[date] = None
+    reported_position_source_type: str = "csv_position_row"
+    reported_position_source_status: ReportedPositionSourceStatus = "unknown"
+    reported_position_source_reason: Optional[str] = None
+    reported_position_source_count: int = 0
+    reported_position_sources: List[ReportedPositionSource] = Field(default_factory=list)
 
 
 class OpenPositionList(ApiModel):

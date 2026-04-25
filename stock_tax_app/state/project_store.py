@@ -11,9 +11,17 @@ from .models import ProjectState, ProjectStateMetadata, SCHEMA_VERSION
 
 STATE_FILENAME = ".stock_tax_state.json"
 _MIGRATED_DOMAINS = frozenset(
-    {"year_settings", "method_selection", "fx_yearly", "fx_daily", "instrument_map"}
+    {
+        "year_settings",
+        "method_selection",
+        "fx_yearly",
+        "fx_daily",
+        "instrument_map",
+        "corporate_actions",
+    }
 )
 _FX_CURRENCY_PAIR = "USD/CZK"
+_SUPPORTED_CORPORATE_ACTION_TYPES = frozenset({"split", "reverse_split", "ticker_change"})
 
 
 class ProjectStateError(RuntimeError):
@@ -51,7 +59,7 @@ def load_project_state(project_dir: Path | str) -> ProjectState:
         fx_yearly=_int_fx_dict(raw.get("fx_yearly"), default_manual=True),
         fx_daily=_str_fx_dict(raw.get("fx_daily")),
         instrument_map=_str_instrument_map_dict(raw.get("instrument_map")),
-        corporate_actions=_list_of_dicts(raw.get("corporate_actions")),
+        corporate_actions=_normalize_corporate_actions_payload(raw.get("corporate_actions")),
         locked_years=_int_bool_dict(raw.get("locked_years")),
         frozen_inventory=_int_keyed_list_dict(raw.get("frozen_inventory")),
         frozen_lot_matching=_int_keyed_list_dict(raw.get("frozen_lot_matching")),
@@ -120,6 +128,24 @@ def adopt_legacy_workbook_state(
             state.instrument_map[symbol] = mapping
             changed = True
 
+    extracted_actions = _extract_corporate_actions_from_legacy(legacy_state)
+    if extracted_actions:
+        existing_by_key = {
+            _corporate_action_identity_key(action): index
+            for index, action in enumerate(state.corporate_actions)
+        }
+        for action in extracted_actions:
+            identity = _corporate_action_identity_key(action)
+            existing_index = existing_by_key.get(identity)
+            if existing_index is None:
+                state.corporate_actions.append(action)
+                existing_by_key[identity] = len(state.corporate_actions) - 1
+                changed = True
+                continue
+            if overwrite:
+                state.corporate_actions[existing_index] = action
+                changed = True
+
     if changed:
         save_project_state(project_dir, state)
     return state
@@ -146,6 +172,10 @@ def merge_project_state_with_legacy_fallback(
     merged["Instrument_Map"] = _merge_instrument_map_rows(
         project_state,
         legacy_state.get("Instrument_Map") or [],
+    )
+    merged["Corporate_Actions"] = _merge_corporate_actions_rows(
+        project_state,
+        legacy_state.get("Corporate_Actions") or [],
     )
     return merged
 
@@ -232,6 +262,52 @@ def _extract_instrument_map_from_legacy(
         if not symbol:
             continue
         out[symbol] = _normalize_instrument_map_entry(symbol, row)
+    return out
+
+
+def _extract_corporate_actions_from_legacy(legacy_state: dict[str, Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+    for row in legacy_state.get("Corporate_Actions", []):
+        if not isinstance(row, dict):
+            continue
+        date_key = _coerce_iso_date(row.get("Date"))
+        instrument_id = str(row.get("Instrument_ID") or "").strip()
+        action_type = str(row.get("Action type") or "").strip().lower()
+        ratio_old = _coerce_float(row.get("Ratio old"))
+        ratio_new = _coerce_float(row.get("Ratio new"))
+        note = str(row.get("Notes") or "").strip()
+        if not (date_key or instrument_id or action_type or note or ratio_old is not None or ratio_new is not None):
+            continue
+
+        # Legacy workbook rows do not carry an action ID, so dedupe by stable identity.
+        dedupe_key = (
+            date_key or "",
+            instrument_id,
+            action_type,
+            str(ratio_old if ratio_old is not None else ""),
+            str(ratio_new if ratio_new is not None else ""),
+        )
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+
+        out.append(
+            {
+                "action_id": "",
+                "action_type": action_type,
+                "effective_date": date_key or "",
+                "instrument_id": instrument_id,
+                "source_symbol": "",
+                "target_instrument_id": "",
+                "target_symbol": "",
+                "ratio_numerator": 1.0 if ratio_new is None else ratio_new,
+                "ratio_denominator": 1.0 if ratio_old is None else ratio_old,
+                "source": "workbook_adoption",
+                "note": note,
+                "enabled": bool(row.get("Applied?", True)),
+            }
+        )
     return out
 
 
@@ -370,6 +446,17 @@ def _merge_instrument_map_rows(
     return [rows_by_symbol[symbol] for symbol in sorted(rows_by_symbol)]
 
 
+def _merge_corporate_actions_rows(
+    project_state: ProjectState,
+    legacy_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not project_state.corporate_actions:
+        return [dict(row) for row in legacy_rows if isinstance(row, dict)]
+
+    normalized = _normalize_corporate_actions_payload(project_state.corporate_actions)
+    return [_project_state_action_to_legacy_row(action) for action in normalized]
+
+
 def _to_json_dict(state: ProjectState) -> dict[str, Any]:
     return {
         "metadata": {"schema_version": state.metadata.schema_version},
@@ -387,7 +474,7 @@ def _to_json_dict(state: ProjectState) -> dict[str, Any]:
             symbol: entry
             for symbol, entry in sorted(_normalize_instrument_map_payload(state.instrument_map).items())
         },
-        "corporate_actions": state.corporate_actions,
+        "corporate_actions": _normalize_corporate_actions_payload(state.corporate_actions),
         "locked_years": {str(k): v for k, v in sorted(state.locked_years.items())},
         "frozen_inventory": {str(k): v for k, v in sorted(state.frozen_inventory.items())},
         "frozen_lot_matching": {
@@ -509,6 +596,128 @@ def _list_of_dicts(raw: Any) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         return []
     return [dict(item) for item in raw if isinstance(item, dict)]
+
+
+def _normalize_corporate_actions_payload(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        action = _normalize_corporate_action_entry(item)
+        if action is None:
+            continue
+        out.append(action)
+    return out
+
+
+def _normalize_corporate_action_entry(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+
+    action_type = str(raw.get("action_type") or raw.get("Action type") or "").strip().lower()
+    if action_type not in _SUPPORTED_CORPORATE_ACTION_TYPES:
+        # Keep unknown values to preserve operator data for diagnostics.
+        action_type = action_type or ""
+
+    effective_date = _coerce_iso_date(raw.get("effective_date") or raw.get("Date"))
+    instrument_id = str(raw.get("instrument_id") or raw.get("Instrument_ID") or "").strip()
+    source_symbol = str(raw.get("source_symbol") or raw.get("Yahoo Symbol") or raw.get("Symbol") or "").strip()
+    target_instrument_id = str(
+        raw.get("target_instrument_id")
+        or raw.get("Target instrument")
+        or raw.get("Target Instrument_ID")
+        or ""
+    ).strip()
+    target_symbol = str(raw.get("target_symbol") or raw.get("Target symbol") or "").strip()
+
+    ratio_numerator = _coerce_float(raw.get("ratio_numerator"))
+    if ratio_numerator is None:
+        ratio_numerator = _coerce_float(raw.get("Ratio new"))
+    ratio_denominator = _coerce_float(raw.get("ratio_denominator"))
+    if ratio_denominator is None:
+        ratio_denominator = _coerce_float(raw.get("Ratio old"))
+
+    if ratio_numerator is None:
+        ratio_numerator = 1.0
+    if ratio_denominator is None:
+        ratio_denominator = 1.0
+
+    action_id = str(raw.get("action_id") or "").strip()
+    source = str(raw.get("source") or "").strip()
+    note = str(raw.get("note") or raw.get("Notes") or "").strip()
+    enabled = bool(raw.get("enabled", raw.get("Applied?", True)))
+
+    if not (
+        action_id
+        or action_type
+        or effective_date
+        or instrument_id
+        or source_symbol
+        or target_instrument_id
+        or target_symbol
+        or note
+    ):
+        return None
+
+    return {
+        "action_id": action_id,
+        "action_type": action_type,
+        "effective_date": effective_date or "",
+        "instrument_id": instrument_id,
+        "source_symbol": source_symbol,
+        "target_instrument_id": target_instrument_id,
+        "target_symbol": target_symbol,
+        "ratio_numerator": ratio_numerator,
+        "ratio_denominator": ratio_denominator,
+        "source": source,
+        "note": note,
+        "enabled": enabled,
+    }
+
+
+def _corporate_action_identity_key(action: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    action_id = str(action.get("action_id") or "").strip()
+    if action_id:
+        return ("id", action_id, "", "", "")
+    return (
+        "row",
+        str(action.get("effective_date") or "").strip(),
+        str(action.get("action_type") or "").strip().lower(),
+        str(action.get("instrument_id") or "").strip(),
+        str(action.get("target_instrument_id") or action.get("target_symbol") or "").strip(),
+    )
+
+
+def _project_state_action_to_legacy_row(action: dict[str, Any]) -> dict[str, Any]:
+    action_id = str(action.get("action_id") or "").strip()
+    action_type = str(action.get("action_type") or "").strip().upper()
+    note = str(action.get("note") or "").strip()
+    if action_type == "TICKER_CHANGE":
+        target = str(action.get("target_instrument_id") or action.get("target_symbol") or "").strip()
+        if target and f"target={target}" not in note:
+            note = f"{note} target={target}".strip()
+
+    ratio_old = _coerce_float(action.get("ratio_denominator"))
+    ratio_new = _coerce_float(action.get("ratio_numerator"))
+    if ratio_old is None:
+        ratio_old = 1.0
+    if ratio_new is None:
+        ratio_new = 1.0
+    enabled = bool(action.get("enabled", True))
+
+    return {
+        "Action ID": action_id,
+        "Date": str(action.get("effective_date") or "").strip(),
+        "Instrument_ID": str(action.get("instrument_id") or action.get("source_symbol") or "").strip(),
+        "Action type": action_type,
+        "Ratio old": ratio_old,
+        "Ratio new": ratio_new,
+        "Cash in lieu": 0.0,
+        "Notes": note,
+        "Applied?": enabled,
+        "Audit status": "applied" if enabled else "not applied",
+    }
 
 
 def _normalize_fx_entry(
