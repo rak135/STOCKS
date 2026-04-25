@@ -1,28 +1,44 @@
 #!/usr/bin/env python3
-"""End-to-end check: lock 2020 in the workbook, rebuild, confirm the
-frozen snapshot survived and 2020 totals did not re-compute."""
+"""End-to-end check for soft-lock semantics in a temp sandbox.
+
+Locking an earlier year beneath an existing later frozen snapshot must
+surface an explicit stale-snapshot rebuild requirement instead of
+failing later with confusing unmatched sells.
+"""
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from openpyxl import load_workbook
 
-WB = "stock_tax_system.xlsx"
-INPUTS = [
-    ".csv/XTB_CZK.csv", ".csv/XTB_USD.csv", ".csv/Lynx.csv",
-    ".csv/Revolut.csv", ".csv/Trading212.csv",
-]
+ROOT = Path(__file__).resolve().parent
 
 
-def run_build() -> None:
-    cmd = [sys.executable, "build_stock_tax_workbook.py",
-           "--input", *INPUTS, "--output", WB]
+def make_sandbox() -> tuple[tempfile.TemporaryDirectory[str], Path, list[str]]:
+    tmpdir = tempfile.TemporaryDirectory(prefix="locked_year_roundtrip_")
+    sandbox = Path(tmpdir.name)
+    shutil.copytree(ROOT / ".csv", sandbox / ".csv")
+    shutil.copy2(ROOT / "stock_tax_system.xlsx", sandbox / "stock_tax_system.xlsx")
+    workbook_path = sandbox / "stock_tax_system.xlsx"
+    inputs = [
+        str(sandbox / ".csv" / name)
+        for name in ["XTB_CZK.csv", "XTB_USD.csv", "Lynx.csv", "Revolut.csv", "Trading212.csv"]
+    ]
+    return tmpdir, workbook_path, inputs
+
+
+def run_build(workbook_path: Path, inputs: list[str], *, expect_success: bool = True) -> subprocess.CompletedProcess[str]:
+    cmd = [sys.executable, str(ROOT / "build_stock_tax_workbook.py"),
+           "--input", *inputs, "--output", str(workbook_path)]
     res = subprocess.run(cmd, capture_output=True, text=True)
-    if res.returncode != 0:
+    if expect_success and res.returncode != 0:
         print("BUILD FAILED:\n" + res.stdout + res.stderr)
         sys.exit(1)
+    return res
 
 
 def set_cell(path: str, sheet: str, row: int, col: int, value) -> None:
@@ -33,6 +49,20 @@ def set_cell(path: str, sheet: str, row: int, col: int, value) -> None:
 
 def read_cell(path: str, sheet: str, row: int, col: int):
     return load_workbook(path)[sheet].cell(row=row, column=col).value
+
+
+def read_check_rows(path: str):
+    ws = load_workbook(path)["Checks"]
+    out = []
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if row is None or all(value is None for value in row):
+            continue
+        out.append({
+            "Severity": row[0],
+            "Category": row[1],
+            "Detail": row[2],
+        })
+    return out
 
 
 def find_row(path: str, sheet: str, header_row: int, key_col: int, key):
@@ -47,74 +77,46 @@ def find_row(path: str, sheet: str, header_row: int, key_col: int, key):
 
 
 def main() -> int:
-    # Pass 1: baseline build with clean defaults.
-    print("== Pass 1: initial build ==")
-    run_build()
-    summary_row_2020 = find_row(WB, "Yearly_Tax_Summary", 1, 1, 2020)
-    assert summary_row_2020, "2020 not in yearly summary after pass 1"
-    tax_2020_pass1 = read_cell(WB, "Yearly_Tax_Summary",
-                               summary_row_2020, 13)
-    print(f"  Yearly_Tax_Summary 2020 tax = {tax_2020_pass1}")
+    tmpdir, workbook_path, inputs = make_sandbox()
+    with tmpdir:
+        # Pass 1: baseline build with clean defaults.
+        print("== Pass 1: initial build ==")
+        run_build(workbook_path, inputs)
+        summary_row_2020 = find_row(str(workbook_path), "Yearly_Tax_Summary", 1, 1, 2020)
+        assert summary_row_2020, "2020 not in yearly summary after pass 1"
+        tax_2020_pass1 = read_cell(str(workbook_path), "Yearly_Tax_Summary",
+                                   summary_row_2020, 13)
+        print(f"  Yearly_Tax_Summary 2020 tax = {tax_2020_pass1}")
 
-    # Lock 2020 on Locked_Years sheet (header on row 3, 2020 first data row).
-    ly_row = find_row(WB, "Locked_Years", 3, 1, 2020)
-    assert ly_row, "Locked_Years 2020 not found"
-    set_cell(WB, "Locked_Years", ly_row, 2, True)
+        # Lock 2020 on Locked_Years sheet (header on row 3, 2020 first data row).
+        ly_row = find_row(str(workbook_path), "Locked_Years", 3, 1, 2020)
+        assert ly_row, "Locked_Years 2020 not found"
+        set_cell(str(workbook_path), "Locked_Years", ly_row, 2, True)
 
-    # Pass 2: rebuild with lock flag but CORRECT FX. Snapshot is taken.
-    print("\n== Pass 2: rebuild with 2020 locked (FX unchanged) ==")
-    run_build()
-    tax_2020_pass2 = read_cell(WB, "Yearly_Tax_Summary",
-                               summary_row_2020, 13)
-    print(f"  Yearly_Tax_Summary 2020 tax after first lock = "
-          f"{tax_2020_pass2}")
+        # Pass 2: rebuild with an earlier lock beneath the existing 2024 snapshot.
+        print("\n== Pass 2: rebuild with 2020 locked under existing 2024 snapshot ==")
+        res = run_build(workbook_path, inputs, expect_success=False)
+        combined = res.stdout + res.stderr
+        if res.returncode == 0:
+            print("FAIL: expected controlled rebuild-required failure, but build succeeded.")
+            return 1
+        if "locked_year_snapshot_rebuild_required" not in combined:
+            print("FAIL: missing explicit locked_year_snapshot_rebuild_required failure output.")
+            return 1
+        if "Year 2020" not in combined:
+            print("FAIL: rebuild-required failure did not mention changed year 2020.")
+            return 1
+        if "2024" not in combined:
+            print("FAIL: rebuild-required failure did not mention later snapshot 2024.")
+            return 1
+        print("  Controlled failure surfaced explicit stale snapshot guidance.")
 
-    fi_years = set()
-    fi_ws = load_workbook(WB)["Frozen_Inventory"]
-    for r in fi_ws.iter_rows(min_row=4, values_only=True):
-        if r[0] is not None:
-            fi_years.add(r[0])
-    fm_years = set()
-    fm_ws = load_workbook(WB)["Frozen_Lot_Matching"]
-    for r in fm_ws.iter_rows(min_row=4, values_only=True):
-        if r[0] is not None:
-            fm_years.add(r[0])
-    print(f"  Frozen_Inventory years:       {sorted(fi_years)}")
-    print(f"  Frozen_Lot_Matching years:    {sorted(fm_years)}")
-
-    if tax_2020_pass1 != tax_2020_pass2:
-        print(f"FAIL: 2020 tax drifted after locking "
-              f"({tax_2020_pass1} -> {tax_2020_pass2})")
-        return 1
-    if 2020 not in fi_years or 2020 not in fm_years:
-        print("FAIL: 2020 not fully captured in frozen sheets.")
-        return 1
-
-    # Pass 3: perturb FX for 2020 — locked snapshot must ignore the change.
-    fx_row = find_row(WB, "FX_Yearly", 3, 1, 2020)
-    assert fx_row, "FX_Yearly 2020 not found"
-    original_fx = read_cell(WB, "FX_Yearly", fx_row, 2)
-    set_cell(WB, "FX_Yearly", fx_row, 2, 30.0)  # deliberate bad rate
-    print("\n== Pass 3: perturb 2020 FX to 30.0 and rebuild ==")
-    run_build()
-    tax_2020_pass3 = read_cell(WB, "Yearly_Tax_Summary",
-                               summary_row_2020, 13)
-    print(f"  Yearly_Tax_Summary 2020 tax after perturbation = "
-          f"{tax_2020_pass3}")
-
-    if tax_2020_pass2 != tax_2020_pass3:
-        print(f"FAIL: 2020 tax drifted after FX perturbation "
-              f"({tax_2020_pass2} -> {tax_2020_pass3})")
-        return 1
-    print("PASS: locked 2020 tax withstood FX perturbation.")
-
-    # Cleanup: restore FX and unlock 2020.
-    print("\n== Cleanup: restore FX and unlock 2020 ==")
-    set_cell(WB, "FX_Yearly", fx_row, 2, original_fx)
-    set_cell(WB, "Locked_Years", ly_row, 2, False)
-    run_build()
-    print("DONE")
-    return 0
+        # Pass 3: explicit unlock remains available as an operator action.
+        print("\n== Pass 3: unlock 2020 explicitly and rebuild ==")
+        set_cell(str(workbook_path), "Locked_Years", ly_row, 2, False)
+        run_build(workbook_path, inputs)
+        print("PASS: soft-lock roundtrip stayed inside sandbox and surfaced explicit rebuild guidance.")
+        return 0
 
 
 if __name__ == "__main__":

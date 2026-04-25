@@ -91,6 +91,44 @@ def _set_year_fx_method(project: Path, year: int, method: str) -> None:
     raise AssertionError(f"Year {year} not found in Settings")
 
 
+def _set_locked_year(project: Path, year: int, locked: bool) -> None:
+    workbook_path = project / "stock_tax_system.xlsx"
+    wb = load_workbook(workbook_path)
+    ws = wb["Locked_Years"]
+    for row in range(4, ws.max_row + 1):
+        if ws.cell(row=row, column=1).value == year:
+            ws.cell(row=row, column=2, value=locked)
+            wb.save(workbook_path)
+            return
+    raise AssertionError(f"Year {year} not found in Locked_Years")
+
+
+def _build_check_rows_for_project(project: Path) -> list[dict]:
+    workbook_path = project / "stock_tax_system.xlsx"
+    calc = workbook_module.calculate_workbook_data(
+        inputs=sorted((project / ".csv").glob("*.csv")),
+        out_path=workbook_path,
+        fetch_missing_fx=False,
+    )
+    return workbook_module.build_check_rows(
+        sim_warnings=calc.sim_warnings,
+        problems=calc.problems,
+        fx_yearly=calc.fx_yearly,
+        fx_daily=calc.fx_daily,
+        settings=calc.settings,
+        locked_years=calc.locked_years,
+        frozen_inventory=calc.frozen_inventory,
+        split_warnings=calc.split_warnings,
+        method_selection=calc.method_selection,
+        yearly_summary=calc.yearly_summary,
+        match_lines=calc.match_lines,
+        lots_final=calc.lots_final,
+        year_end_inventory=calc.year_end_inventory,
+        frozen_snapshots=calc.frozen_snapshots,
+        fx=calc.fx,
+    )
+
+
 def _clear_fx_daily_rows(project: Path) -> None:
     workbook_path = project / "stock_tax_system.xlsx"
     wb = load_workbook(workbook_path)
@@ -1427,6 +1465,84 @@ def test_api_rejects_2024_method_change(tmp_path):
     response = client.patch("/api/years/2024", json={"method": "FIFO"})
     assert response.status_code == 409
     assert "2024 is locked" in response.json()["detail"]
+
+
+def test_build_locked_years_allows_explicit_unlock_of_filed_year():
+    locked_years = workbook_module.build_locked_years(
+        {"Locked_Years": [{"Tax year": 2024, "Locked?": False}]},
+        [2024],
+    )
+
+    assert locked_years[2024] is False
+    assert policy.check_unlock(2024) is None
+
+
+def test_locked_year_snapshot_rebuild_required_when_earlier_year_locked_under_later_snapshot(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    _set_locked_year(project, 2020, True)
+
+    rows = _build_check_rows_for_project(project)
+    rebuild_rows = [
+        row for row in rows
+        if row.get("Category") == "locked_year_snapshot_rebuild_required"
+    ]
+
+    assert rebuild_rows
+    detail = rebuild_rows[0]["Detail"]
+    assert "Year 2020" in detail
+    assert "2024" in detail
+    assert "stale" in detail.lower()
+    assert "rebuild/recalculate frozen snapshots from 2020 onward is required" in detail.lower()
+
+
+def test_stale_frozen_snapshot_manifest_persists_rebuild_required_check(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    _set_locked_year(project, 2020, True)
+
+    calc = workbook_module.calculate_workbook_data(
+        inputs=sorted((project / ".csv").glob("*.csv")),
+        out_path=project / "stock_tax_system.xlsx",
+        fetch_missing_fx=False,
+    )
+    workbook_module.write_workbook(
+        calc.output_path,
+        calc.raw_rows,
+        calc.txs,
+        calc.ignored,
+        calc.problems,
+        calc.instrument_map,
+        calc.fx_yearly,
+        calc.fx_daily,
+        calc.fx_daily_sources,
+        calc.corporate_actions,
+        calc.method_selection,
+        calc.locked_years,
+        calc.settings,
+        calc.frozen_inventory,
+        calc.frozen_matching,
+        calc.frozen_snapshots,
+        calc.fx,
+        calc.lots_final,
+        calc.match_lines,
+        calc.sim_warnings,
+        calc.yearly_summary,
+        calc.method_comparison,
+        calc.split_warnings,
+        calc.year_end_inventory,
+        calc.import_log,
+        calc.review_state,
+        calc.filed_reconciliation,
+        fx_yearly_sources=calc.fx_yearly_sources,
+    )
+
+    rows = _build_check_rows_for_project(project)
+    rebuild_rows = [
+        row for row in rows
+        if row.get("Category") == "locked_year_snapshot_rebuild_required"
+    ]
+
+    assert rebuild_rows
+    assert any("2024" in str(row.get("Detail") or "") for row in rebuild_rows)
 
 
 def test_api_patch_year_updates_method_for_unlocked_year(tmp_path):

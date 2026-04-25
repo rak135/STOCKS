@@ -24,14 +24,14 @@ DEFAULT_METHOD = "FIFO"
 # ---------------------------------------------------------------------
 
 #: Years that were already filed with the Czech tax authority, and the
-#: matching method used in the filed return. These cannot be optimised
-#: or unlocked via the API.
+#: matching method used in the filed return.
 FILED_YEARS: Dict[int, str] = {
     2024: "LIFO",
 }
 
-#: Years auto-locked as a consequence of having been filed. A locked
-#: year's method, FX method, rate and 100k toggle cannot be mutated.
+#: Years auto-locked by default as a consequence of having been filed.
+#: The workbook/build pipeline may still allow an explicit operator
+#: unlock; this set only provides the default lock state.
 AUTO_LOCKED_YEARS: Set[int] = set(FILED_YEARS.keys())
 
 #: Default matching method per year when no operator selection exists.
@@ -59,8 +59,11 @@ def is_filed(year: int) -> bool:
 
 
 def is_locked(year: int) -> bool:
-    """A year is locked iff it was filed. (Operator cannot lock a year
-    that was not filed yet — they'd file first, then the server locks.)"""
+    """Return the default lock state for a year.
+
+    Filed years start locked by default, but lock state is still a soft
+    operator control rather than permanent immutability.
+    """
     return year in AUTO_LOCKED_YEARS
 
 
@@ -124,16 +127,11 @@ def check_year_mutation(
 
 
 def check_unlock(year: int) -> PolicyViolation | None:
-    """Refuse API unlock of a year that was filed."""
-    if is_filed(year):
-        return PolicyViolation(
-            code="filed_year_unlock_forbidden",
-            message=(
-                f"{year} was filed under {filed_method(year)} and cannot be "
-                "unlocked via the API. If a correction is genuinely needed, "
-                "edit the filed-year policy in stock_tax_app.engine.policy."
-            ),
-        )
+    """Explicit unlock is always allowed by policy.
+
+    The current API still lacks a dedicated unlock route; callers that do
+    expose an explicit unlock flow should treat lock state as soft.
+    """
     return None
 
 
