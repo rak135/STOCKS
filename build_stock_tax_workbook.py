@@ -257,6 +257,8 @@ class CalculationResult:
     fx_yearly: Dict[int, float]
     fx_daily: Dict[date, float]
     fx_yearly_sources: Dict[int, str]
+    fx_yearly_manual: Dict[int, bool]
+    fx_daily_sources: Dict[date, str]
     locked_years: Dict[int, bool]
     corporate_actions: List[Dict[str, Any]]
     frozen_inventory: Dict[int, List[Dict[str, Any]]]
@@ -586,13 +588,14 @@ def _to_bool(value: Any, default: bool) -> bool:
 
 
 def build_fx_tables(user_state: Dict[str, Any], years: List[int]
-                    ) -> Tuple[Dict[int, float], Dict[date, float], Dict[int, str]]:
-    """Return (yearly_rates, daily_rates, yearly_sources).
+                    ) -> Tuple[Dict[int, float], Dict[date, float], Dict[int, str], Dict[int, bool], Dict[date, str]]:
+    """Return (yearly_rates, daily_rates, yearly_sources, yearly_manual, daily_sources).
 
     yearly_sources maps year → source label (e.g. "GFŘ-D-65" or "manual" or "default").
     """
     yearly: Dict[int, float] = {}
     yearly_src: Dict[int, str] = {}
+    yearly_manual: Dict[int, bool] = {}
     for row in user_state.get("FX_Yearly", []):
         try:
             y = int(row.get("Tax year"))
@@ -602,17 +605,24 @@ def build_fx_tables(user_state: Dict[str, Any], years: List[int]
         yearly[y] = r
         src_note = (row.get("Source / note") or "").strip()
         yearly_src[y] = src_note if src_note else "manual"
+        if row.get("__manual__") is None:
+            yearly_manual[y] = not src_note or "manual" in src_note.lower()
+        else:
+            yearly_manual[y] = _to_bool(row.get("__manual__"), False)
     for y in years:
         if y not in yearly:
             if y in GFR_OFFICIAL_RATES:
                 official_r, official_label = GFR_OFFICIAL_RATES[y]
                 yearly[y] = official_r
                 yearly_src[y] = official_label
+                yearly_manual[y] = False
             elif y in DEFAULT_FX_YEARLY:
                 yearly[y] = DEFAULT_FX_YEARLY[y]
                 yearly_src[y] = "default"
+                yearly_manual[y] = False
 
     daily: Dict[date, float] = {}
+    daily_src: Dict[date, str] = {}
     for row in user_state.get("FX_Daily", []):
         d = row.get("Date")
         rate = row.get("USD_CZK")
@@ -624,9 +634,10 @@ def build_fx_tables(user_state: Dict[str, Any], years: List[int]
             continue
         try:
             daily[d] = float(rate)
+            daily_src[d] = str(row.get("Source / note") or "").strip()
         except (TypeError, ValueError):
             continue
-    return yearly, daily, yearly_src
+    return yearly, daily, yearly_src, yearly_manual, daily_src
 
 
 def build_instrument_map(user_state: Dict[str, Any],
@@ -879,21 +890,24 @@ def download_cnb_daily_rates_year(year: int, timeout: int = 15
 
 def refresh_fx_daily_for_years(
     fx_daily: Dict[date, float],
+    fx_daily_sources: Dict[date, str],
     years_needing_daily: List[int],
     cache_path: Path,
-) -> Tuple[Dict[date, float], List[str]]:
+) -> Tuple[Dict[date, float], Dict[date, str], List[str]]:
     """Download missing CNB daily rates for given years.
 
-    Returns (updated_dict, list_of_info_messages).
+    Returns (updated_rates, updated_sources, list_of_info_messages).
     """
     msgs: List[str] = []
     cache_raw = _load_cnb_cache(cache_path)
     # Seed fx_daily from cache
     updated = dict(fx_daily)
+    updated_sources = dict(fx_daily_sources)
     for iso, rate in cache_raw.items():
         try:
             d = date.fromisoformat(iso)
             updated.setdefault(d, rate)
+            updated_sources.setdefault(d, "CNB cache")
         except ValueError:
             continue
 
@@ -905,6 +919,8 @@ def refresh_fx_daily_for_years(
         downloaded = download_cnb_daily_rates_year(y)
         if downloaded:
             updated.update(downloaded)
+            for d in downloaded:
+                updated_sources[d] = "CNB download"
             msgs.append(f"  → {len(downloaded)} dates downloaded for {y}.")
             # Persist to cache
             new_raw = dict(cache_raw)
@@ -913,7 +929,7 @@ def refresh_fx_daily_for_years(
             _save_cnb_cache(cache_path, new_raw)
         else:
             msgs.append(f"  → Download failed for {y} — add rates manually to FX_Daily.")
-    return updated, msgs
+    return updated, updated_sources, msgs
 
 
 # -----------------------------------------------------------------------
@@ -2064,7 +2080,7 @@ def calculate_workbook_data(
     settings = build_settings(user_state, years)
     instrument_map = build_instrument_map(user_state, txs)
     apply_instrument_map(txs, instrument_map)
-    fx_yearly, fx_daily, fx_yearly_sources = build_fx_tables(user_state, years)
+    fx_yearly, fx_daily, fx_yearly_sources, fx_yearly_manual, fx_daily_sources = build_fx_tables(user_state, years)
     locked_years = build_locked_years(user_state, years)
     corporate_actions = build_corporate_actions(user_state)
     frozen_inventory = load_frozen_inventory(user_state)
@@ -2103,8 +2119,8 @@ def calculate_workbook_data(
         ]
         if daily_years_needed:
             cache_path = _cnb_cache_path(Path(out_path))
-            fx_daily, _dl_msgs = refresh_fx_daily_for_years(
-                fx_daily, daily_years_needed, cache_path
+            fx_daily, fx_daily_sources, _dl_msgs = refresh_fx_daily_for_years(
+                fx_daily, fx_daily_sources, daily_years_needed, cache_path
             )
             fx = FXResolver(fx_yearly, fx_daily, settings)
 
@@ -2162,6 +2178,8 @@ def calculate_workbook_data(
         fx_yearly=fx_yearly,
         fx_daily=fx_daily,
         fx_yearly_sources=fx_yearly_sources,
+        fx_yearly_manual=fx_yearly_manual,
+        fx_daily_sources=fx_daily_sources,
         locked_years=locked_years,
         corporate_actions=corporate_actions,
         frozen_inventory=frozen_inventory,
@@ -2207,6 +2225,7 @@ def write_calculation_result(
         fx_yearly=result.fx_yearly,
         fx_yearly_sources=result.fx_yearly_sources,
         fx_daily=result.fx_daily,
+        fx_daily_sources=result.fx_daily_sources,
         corporate_actions=result.corporate_actions,
         method_selection=result.method_selection,
         locked_years=result.locked_years,
@@ -2256,6 +2275,7 @@ def write_workbook(
     instrument_map: Dict[str, Dict[str, str]],
     fx_yearly: Dict[int, float],
     fx_daily: Dict[date, float],
+    fx_daily_sources: Dict[date, str],
     corporate_actions: List[Dict[str, Any]],
     method_selection: Dict[Tuple[int, str], str],
     locked_years: Dict[int, bool],
@@ -2289,7 +2309,7 @@ def write_workbook(
     _write_ignored(wb, ignored)
     _write_transactions(wb, txs)
     _write_instrument_map(wb, instrument_map)
-    _write_fx_daily(wb, fx_daily)
+    _write_fx_daily(wb, fx_daily, fx_daily_sources)
     _write_fx_yearly(wb, fx_yearly, sorted(settings.keys()), fx_yearly_sources)
     _write_corporate_actions(wb, corporate_actions)
     _write_split_audit(wb, split_warnings)
@@ -2664,7 +2684,11 @@ def _write_instrument_map(
     ws.freeze_panes = "A2"
 
 
-def _write_fx_daily(wb: Workbook, fx_daily: Dict[date, float]) -> None:
+def _write_fx_daily(
+    wb: Workbook,
+    fx_daily: Dict[date, float],
+    fx_daily_sources: Optional[Dict[date, str]] = None,
+) -> None:
     ws = wb.create_sheet("FX_Daily")
     ws["A1"] = ("CNB daily USD/CZK rates. Used when a tax year's FX method "
                 "is FX_DAILY_CNB. Rates can be downloaded automatically by "
@@ -2676,11 +2700,13 @@ def _write_fx_daily(wb: Workbook, fx_daily: Dict[date, float]) -> None:
     headers = ["Date", "USD_CZK", "Source / note"]
     write_header(ws, headers, row=3)
     row = 4
+    src = fx_daily_sources or {}
     for d in sorted(fx_daily.keys()):
         ws.cell(row=row, column=1, value=d)
         ws.cell(row=row, column=1).number_format = "yyyy-mm-dd"
         ws.cell(row=row, column=2, value=fx_daily[d])
         ws.cell(row=row, column=2).number_format = "0.0000"
+        ws.cell(row=row, column=3, value=src.get(d, ""))
         row += 1
     add_table(ws, "tbl_FX_Daily", f"A3:C{max(4, row-1)}")
     ws.column_dimensions["A"].width = 14

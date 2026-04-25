@@ -3,13 +3,15 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 from .models import ProjectState, ProjectStateMetadata, SCHEMA_VERSION
 
 STATE_FILENAME = ".stock_tax_state.json"
-_MIGRATED_DOMAINS = frozenset({"year_settings", "method_selection"})
+_MIGRATED_DOMAINS = frozenset({"year_settings", "method_selection", "fx_yearly", "fx_daily"})
+_FX_CURRENCY_PAIR = "USD/CZK"
 
 
 class ProjectStateError(RuntimeError):
@@ -44,8 +46,8 @@ def load_project_state(project_dir: Path | str) -> ProjectState:
         metadata=ProjectStateMetadata(schema_version=version),
         year_settings=_int_keyed_dict(raw.get("year_settings")),
         method_selection=_int_nested_str_dict(raw.get("method_selection")),
-        fx_yearly=_int_keyed_dict(raw.get("fx_yearly")),
-        fx_daily=_str_keyed_dict(raw.get("fx_daily")),
+        fx_yearly=_int_fx_dict(raw.get("fx_yearly"), default_manual=True),
+        fx_daily=_str_fx_dict(raw.get("fx_daily")),
         instrument_map=_str_keyed_dict(raw.get("instrument_map")),
         corporate_actions=_list_of_dicts(raw.get("corporate_actions")),
         locked_years=_int_bool_dict(raw.get("locked_years")),
@@ -83,6 +85,8 @@ def save_project_state(project_dir: Path | str, state: ProjectState) -> None:
 def adopt_legacy_workbook_state(
     project_dir: Path | str,
     legacy_state: dict[str, Any],
+    *,
+    overwrite: bool = False,
 ) -> ProjectState:
     state = load_project_state(project_dir)
     changed = False
@@ -95,9 +99,19 @@ def adopt_legacy_workbook_state(
     for year, method_rows in _extract_method_selection_from_legacy(legacy_state).items():
         current = state.method_selection.setdefault(year, {})
         for instrument_id, method in method_rows.items():
-            if instrument_id not in current:
+            if overwrite or instrument_id not in current:
                 current[instrument_id] = method
                 changed = True
+
+    for year, fx_row in _extract_fx_yearly_from_legacy(legacy_state).items():
+        if overwrite or year not in state.fx_yearly:
+            state.fx_yearly[year] = fx_row
+            changed = True
+
+    for day, fx_row in _extract_fx_daily_from_legacy(legacy_state).items():
+        if overwrite or day not in state.fx_daily:
+            state.fx_daily[day] = fx_row
+            changed = True
 
     if changed:
         save_project_state(project_dir, state)
@@ -113,6 +127,14 @@ def merge_project_state_with_legacy_fallback(
     merged["Method_Selection"] = _merge_method_selection_rows(
         project_state,
         legacy_state.get("Method_Selection") or [],
+    )
+    merged["FX_Yearly"] = _merge_fx_yearly_rows(
+        project_state,
+        legacy_state.get("FX_Yearly") or [],
+    )
+    merged["FX_Daily"] = _merge_fx_daily_rows(
+        project_state,
+        legacy_state.get("FX_Daily") or [],
     )
     return merged
 
@@ -151,6 +173,41 @@ def _extract_method_selection_from_legacy(
         if not instrument_id or not method:
             continue
         out.setdefault(year, {})[instrument_id] = method
+    return out
+
+
+def _extract_fx_yearly_from_legacy(legacy_state: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    out: dict[int, dict[str, Any]] = {}
+    for row in legacy_state.get("FX_Yearly", []):
+        try:
+            year = int(row.get("Tax year"))
+            rate = float(row.get("USD_CZK"))
+        except (TypeError, ValueError):
+            continue
+        source_note = str(row.get("Source / note") or "").strip()
+        out[year] = {
+            "currency_pair": _FX_CURRENCY_PAIR,
+            "rate": rate,
+            "source_note": source_note,
+            "manual": True if not source_note else "manual" in source_note.lower(),
+        }
+    return out
+
+
+def _extract_fx_daily_from_legacy(legacy_state: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for row in legacy_state.get("FX_Daily", []):
+        date_key = _coerce_iso_date(row.get("Date"))
+        rate = _coerce_float(row.get("USD_CZK"))
+        if date_key is None or rate is None:
+            continue
+        source_note = str(row.get("Source / note") or "").strip()
+        out[date_key] = {
+            "currency_pair": _FX_CURRENCY_PAIR,
+            "rate": rate,
+            "source_note": source_note,
+            "manual": "manual" in source_note.lower(),
+        }
     return out
 
 
@@ -213,6 +270,56 @@ def _merge_method_selection_rows(
     ]
 
 
+def _merge_fx_yearly_rows(
+    project_state: ProjectState,
+    legacy_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows_by_year: dict[int, dict[str, Any]] = {}
+    for row in legacy_rows:
+        try:
+            year = int(row.get("Tax year"))
+        except (TypeError, ValueError):
+            continue
+        rows_by_year[year] = dict(row)
+
+    for year, entry in project_state.fx_yearly.items():
+        normalized = _normalize_fx_entry(entry, default_manual=True)
+        if normalized is None:
+            continue
+        merged = dict(rows_by_year.get(year, {}))
+        merged["Tax year"] = year
+        merged["USD_CZK"] = normalized["rate"]
+        merged["Source / note"] = _fx_sheet_source_value(normalized)
+        merged["__manual__"] = bool(normalized.get("manual"))
+        rows_by_year[year] = merged
+
+    return [rows_by_year[year] for year in sorted(rows_by_year)]
+
+
+def _merge_fx_daily_rows(
+    project_state: ProjectState,
+    legacy_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows_by_day: dict[str, dict[str, Any]] = {}
+    for row in legacy_rows:
+        date_key = _coerce_iso_date(row.get("Date"))
+        if date_key is None:
+            continue
+        rows_by_day[date_key] = dict(row)
+
+    for date_key, entry in project_state.fx_daily.items():
+        normalized = _normalize_fx_entry(entry)
+        if normalized is None:
+            continue
+        merged = dict(rows_by_day.get(date_key, {}))
+        merged["Date"] = date_key
+        merged["USD_CZK"] = normalized["rate"]
+        merged["Source / note"] = _fx_sheet_source_value(normalized)
+        rows_by_day[date_key] = merged
+
+    return [rows_by_day[key] for key in sorted(rows_by_day)]
+
+
 def _to_json_dict(state: ProjectState) -> dict[str, Any]:
     return {
         "metadata": {"schema_version": state.metadata.schema_version},
@@ -221,8 +328,11 @@ def _to_json_dict(state: ProjectState) -> dict[str, Any]:
             str(k): dict(sorted(v.items()))
             for k, v in sorted(state.method_selection.items())
         },
-        "fx_yearly": {str(k): v for k, v in sorted(state.fx_yearly.items())},
-        "fx_daily": dict(sorted(state.fx_daily.items())),
+        "fx_yearly": {
+            str(k): v
+            for k, v in sorted(_normalize_fx_yearly_payload(state.fx_yearly).items())
+        },
+        "fx_daily": dict(sorted(_normalize_fx_daily_payload(state.fx_daily).items())),
         "instrument_map": dict(sorted(state.instrument_map.items())),
         "corporate_actions": state.corporate_actions,
         "locked_years": {str(k): v for k, v in sorted(state.locked_years.items())},
@@ -249,6 +359,19 @@ def _int_keyed_dict(raw: Any) -> dict[int, dict[str, Any]]:
     return out
 
 
+def _int_fx_dict(raw: Any, *, default_manual: bool = False) -> dict[int, dict[str, Any]]:
+    out: dict[int, dict[str, Any]] = {}
+    for key, value in (raw or {}).items():
+        try:
+            year = int(key)
+        except (TypeError, ValueError):
+            continue
+        normalized = _normalize_fx_entry(value, default_manual=default_manual)
+        if normalized is not None:
+            out[year] = normalized
+    return out
+
+
 def _int_nested_str_dict(raw: Any) -> dict[int, dict[str, str]]:
     out: dict[int, dict[str, str]] = {}
     for key, value in (raw or {}).items():
@@ -264,6 +387,14 @@ def _int_nested_str_dict(raw: Any) -> dict[int, dict[str, str]]:
             if str(inner_key).strip()
         }
     return out
+
+
+def _normalize_fx_yearly_payload(raw: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    return _int_fx_dict(raw, default_manual=True)
+
+
+def _normalize_fx_daily_payload(raw: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return _str_fx_dict(raw)
 
 
 def _int_keyed_list_dict(raw: Any) -> dict[int, list[dict[str, Any]]]:
@@ -289,6 +420,16 @@ def _int_bool_dict(raw: Any) -> dict[int, bool]:
     return out
 
 
+def _str_fx_dict(raw: Any) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for key, value in (raw or {}).items():
+        date_key = _coerce_iso_date(key)
+        normalized = _normalize_fx_entry(value)
+        if date_key and normalized is not None:
+            out[date_key] = normalized
+    return out
+
+
 def _str_keyed_dict(raw: Any) -> dict[str, dict[str, Any]]:
     return {
         str(key): dict(value)
@@ -301,3 +442,68 @@ def _list_of_dicts(raw: Any) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         return []
     return [dict(item) for item in raw if isinstance(item, dict)]
+
+
+def _normalize_fx_entry(
+    raw: Any,
+    *,
+    default_manual: bool = False,
+) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    rate = _coerce_float(raw.get("rate"))
+    if rate is None:
+        rate = _coerce_float(raw.get("usd_czk"))
+    if rate is None:
+        return None
+
+    source_note = str(
+        raw.get("source_note")
+        or raw.get("source")
+        or raw.get("source_label")
+        or ""
+    ).strip()
+    manual_raw = raw.get("manual")
+    if manual_raw is None:
+        manual = default_manual if not source_note else "manual" in source_note.lower()
+    else:
+        manual = bool(manual_raw)
+
+    return {
+        "currency_pair": str(raw.get("currency_pair") or raw.get("currency") or _FX_CURRENCY_PAIR),
+        "rate": rate,
+        "source_note": source_note,
+        "manual": manual,
+    }
+
+
+def _fx_sheet_source_value(entry: dict[str, Any]) -> str:
+    source_note = str(entry.get("source_note") or "").strip()
+    if source_note:
+        return source_note
+    if bool(entry.get("manual")):
+        return "manual"
+    return ""
+
+
+def _coerce_float(value: Any) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_iso_date(value: Any) -> str | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, date):
+        return value.isoformat()
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text).isoformat()
+    except ValueError:
+        return None

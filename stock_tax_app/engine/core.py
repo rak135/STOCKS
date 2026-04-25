@@ -426,7 +426,9 @@ def _build_fx_years(calc: workbook.CalculationResult) -> list[FxYear]:
                 source_label=source_label,
                 source_url=None,
                 verified_at=None,
-                manual_override="manual" in source_label.lower(),
+                manual_override=bool(
+                    calc.fx_yearly_manual.get(year, "manual" in source_label.lower())
+                ),
                 locked=policy.is_locked(year) or bool(calc.locked_years.get(year)),
             )
         )

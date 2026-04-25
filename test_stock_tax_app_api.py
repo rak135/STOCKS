@@ -15,6 +15,8 @@ from stock_tax_app.engine import policy
 from stock_tax_app.engine import core as engine_core
 from stock_tax_app.engine import ui_state as ui_state_module
 from stock_tax_app.engine.core import run
+from stock_tax_app.state import project_store
+from stock_tax_app.state.models import ProjectState
 
 
 ROOT = Path(__file__).resolve().parent
@@ -104,6 +106,43 @@ def _remove_fx_yearly_row(project: Path, year: int) -> None:
             for col in range(1, 4):
                 ws.cell(row=row, column=col, value=None)
             break
+    wb.save(workbook_path)
+
+
+def _set_fx_yearly_row(project: Path, year: int, rate: float, source_note: str = "") -> None:
+    workbook_path = project / "stock_tax_system.xlsx"
+    wb = load_workbook(workbook_path)
+    ws = wb["FX_Yearly"]
+    for row in range(4, ws.max_row + 1):
+        if ws.cell(row=row, column=1).value == year:
+            ws.cell(row=row, column=2, value=rate)
+            ws.cell(row=row, column=3, value=source_note)
+            wb.save(workbook_path)
+            return
+    row = ws.max_row + 1
+    ws.cell(row=row, column=1, value=year)
+    ws.cell(row=row, column=2, value=rate)
+    ws.cell(row=row, column=3, value=source_note)
+    wb.save(workbook_path)
+
+
+def _set_fx_daily_row(project: Path, target_date: str, rate: float, source_note: str = "") -> None:
+    workbook_path = project / "stock_tax_system.xlsx"
+    wb = load_workbook(workbook_path)
+    ws = wb["FX_Daily"]
+    for row in range(4, ws.max_row + 1):
+        value = ws.cell(row=row, column=1).value
+        current = value.date().isoformat() if hasattr(value, "date") else str(value or "")
+        if current == target_date:
+            ws.cell(row=row, column=1, value=target_date)
+            ws.cell(row=row, column=2, value=rate)
+            ws.cell(row=row, column=3, value=source_note)
+            wb.save(workbook_path)
+            return
+    row = ws.max_row + 1
+    ws.cell(row=row, column=1, value=target_date)
+    ws.cell(row=row, column=2, value=rate)
+    ws.cell(row=row, column=3, value=source_note)
     wb.save(workbook_path)
 
 
@@ -441,6 +480,146 @@ def test_api_status_exposes_missing_fx_and_blocks_calculation(tmp_path, monkeypa
     assert fx.status_code == 200
     fx_2020 = next(row for row in fx.json() if row["year"] == 2020)
     assert fx_2020["missing_dates"]
+
+
+def test_project_state_fx_can_unblock_strict_daily_fx(tmp_path, monkeypatch):
+    project = _copy_project_fixture(tmp_path)
+    _set_year_fx_method(project, 2020, "FX_DAILY_CNB")
+    _clear_fx_daily_rows(project)
+    monkeypatch.setattr(
+        workbook_module,
+        "download_cnb_daily_rates_year",
+        lambda year, timeout=15: {},
+    )
+
+    blocked_client = TestClient(create_app(project_dir=project))
+    blocked_before = blocked_client.get("/api/status").json()
+    assert blocked_before["global_status"] == "blocked"
+
+    calc = workbook_module.calculate_workbook_data(
+        inputs=sorted((project / ".csv").glob("*.csv")),
+        out_path=project / "stock_tax_system.xlsx",
+        fetch_missing_fx=False,
+    )
+    required_dates = sorted({tx.trade_date.isoformat() for tx in calc.txs if tx.trade_date.year == 2020})
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            fx_daily={
+                day: {
+                    "currency_pair": "USD/CZK",
+                    "rate": 23.55,
+                    "source_note": "state strict unblock",
+                    "manual": True,
+                }
+                for day in required_dates
+            }
+        ),
+    )
+
+    client = TestClient(create_app(project_dir=project))
+    status = client.get("/api/status")
+    assert status.status_code == 200
+    body = status.json()
+    assert body["global_status"] != "blocked"
+    assert not any("FX_DAILY_CNB" in check["message"] for check in body["unresolved_checks"])
+
+    sales = client.get("/api/sales")
+    assert sales.status_code == 200
+    assert sales.json()
+
+    fx = client.get("/api/fx")
+    fx_2020 = next(row for row in fx.json() if row["year"] == 2020)
+    assert fx_2020["missing_dates"] == []
+    assert fx_2020["daily_cached"] >= len(required_dates)
+
+
+def test_missing_fx_still_blocks_after_project_state_merge_path(tmp_path, monkeypatch):
+    project = _copy_project_fixture(tmp_path)
+    _set_year_fx_method(project, 2020, "FX_DAILY_CNB")
+    _clear_fx_daily_rows(project)
+    monkeypatch.setattr(
+        workbook_module,
+        "download_cnb_daily_rates_year",
+        lambda year, timeout=15: {},
+    )
+
+    client = TestClient(create_app(project_dir=project))
+    status = client.get("/api/status")
+    assert status.status_code == 200
+    body = status.json()
+    assert body["global_status"] == "blocked"
+    assert any("FX_DAILY_CNB" in check["message"] for check in body["unresolved_checks"])
+
+    years = client.get("/api/years")
+    assert years.status_code == 200
+    assert years.json() == []
+
+    fx = client.get("/api/fx")
+    assert fx.status_code == 200
+    fx_2020 = next(row for row in fx.json() if row["year"] == 2020)
+    assert fx_2020["unified_rate"] == 23.14
+    assert fx_2020["missing_dates"]
+    assert fx_2020["daily_cached"] == 0
+
+
+def test_workbook_export_reflects_project_state_fx(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    target_day = "2020-02-03"
+    _set_fx_yearly_row(project, 2025, 19.75, "workbook yearly")
+    _set_fx_daily_row(project, target_day, 19.25, "workbook daily")
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            fx_yearly={
+                2025: {
+                    "currency_pair": "USD/CZK",
+                    "rate": 24.01,
+                    "source_note": "state export yearly",
+                    "manual": True,
+                }
+            },
+            fx_daily={
+                target_day: {
+                    "currency_pair": "USD/CZK",
+                    "rate": 24.02,
+                    "source_note": "state export daily",
+                    "manual": True,
+                }
+            },
+        ),
+    )
+
+    client = TestClient(create_app(project_dir=project))
+    result = client.app.state.runtime.calculate(write_workbook=True)
+    assert result.fx_years
+
+    wb = load_workbook(project / "stock_tax_system.xlsx")
+    yearly_ws = wb["FX_Yearly"]
+    daily_ws = wb["FX_Daily"]
+
+    yearly_rate = None
+    yearly_note = None
+    for row in range(4, yearly_ws.max_row + 1):
+        if yearly_ws.cell(row=row, column=1).value == 2025:
+            yearly_rate = yearly_ws.cell(row=row, column=2).value
+            yearly_note = yearly_ws.cell(row=row, column=3).value
+            break
+
+    daily_rate = None
+    daily_note = None
+    for row in range(4, daily_ws.max_row + 1):
+        value = daily_ws.cell(row=row, column=1).value
+        current = value.date().isoformat() if hasattr(value, "date") else str(value or "")
+        if current == target_day:
+            daily_rate = daily_ws.cell(row=row, column=2).value
+            daily_note = daily_ws.cell(row=row, column=3).value
+            break
+
+    assert yearly_rate == 24.01
+    assert yearly_note == "state export yearly"
+    assert daily_rate == 24.02
+    assert daily_note == "state export daily"
 
 
 def test_blocked_fx_run_skips_workbook_write_and_write_path_fails_cleanly(tmp_path, monkeypatch):
