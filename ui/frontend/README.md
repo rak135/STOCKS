@@ -26,5 +26,6 @@ to the backend at `http://127.0.0.1:8787`.
   - Audit Pack
   - Settings
 
-The frontend must not parse `stock_tax_system.xlsx`; all business data
-comes from the FastAPI backend.
+The frontend must not parse any Excel workbook; all business data
+comes from the FastAPI backend. Excel is a legacy export target only,
+not a runtime input or required artifact.

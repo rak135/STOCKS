@@ -1,7 +1,7 @@
 {
   "project_path": "C:\\DATA\\PROJECTS\\STOCKS",
   "csv_folder": "C:\\DATA\\PROJECTS\\STOCKS\\.csv",
-  "output_path": "C:\\DATA\\PROJECTS\\STOCKS\\stock_tax_system.xlsx",
+  "output_path": "C:\\DATA\\PROJECTS\\STOCKS\\stock_tax_export.xlsx",
   "last_calculated_at": "2026-04-24T18:03:02.568173Z",
   "global_status": "needs_review",
   "next_action": {

@@ -56,6 +56,8 @@ _PLACEHOLDER_HREF_FALLBACKS = {
 POSITION_RECONCILIATION_TOLERANCE_DEFAULT = 1e-4
 POSITION_RECONCILIATION_WARN_TOLERANCE_DEFAULT = 1e-2
 
+ENGINE_DEFAULT_EXPORT_NAME = "stock_tax_export.xlsx"
+
 
 def _resolve_path(project_dir: Path, value: Path | str | None, default_name: str) -> Path:
     if value is None:
@@ -1264,7 +1266,7 @@ def run(
 ) -> EngineResult:
     project_path = Path(project_dir).resolve()
     csv_path = _resolve_path(project_path, csv_dir, ".csv")
-    output = _resolve_path(project_path, output_path, workbook.CANONICAL_OUTPUT_NAME)
+    output = _resolve_path(project_path, output_path, ENGINE_DEFAULT_EXPORT_NAME)
 
     inputs = _discover_csv_inputs(csv_path)
     calc = workbook.calculate_workbook_data(

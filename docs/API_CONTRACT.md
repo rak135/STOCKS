@@ -1,8 +1,9 @@
 # API Contract
 
 The frontend talks only to the FastAPI backend. It must never parse
-`stock_tax_system.xlsx` directly, and it must never inspect the raw
-Excel workbook to derive state.
+any Excel workbook directly, and it must never inspect a raw workbook
+file to derive state. The backend does not require a root workbook to
+operate — Excel is a legacy export, not the runtime truth.
 
 ## Endpoints
 

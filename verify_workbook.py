@@ -156,7 +156,11 @@ def find_excel_executable() -> str | None:
     return shutil.which("excel")
 
 
-def main(path: str = "stock_tax_system.xlsx", unmatched_tolerance: float = DEFAULT_UNMATCHED_TOLERANCE) -> int:
+def main(path: str | None = None, unmatched_tolerance: float = DEFAULT_UNMATCHED_TOLERANCE) -> int:
+    if not path:
+        print("FAIL: workbook path is required. Pass an explicit export path, e.g. "
+              "`py -3 verify_workbook.py path/to/export.xlsx`.")
+        return 2
     xlsx_path = Path(path)
     failures: List[str] = []
 
@@ -274,8 +278,12 @@ def main(path: str = "stock_tax_system.xlsx", unmatched_tolerance: float = DEFAU
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("path", nargs="?", default="stock_tax_system.xlsx")
+    ap = argparse.ArgumentParser(
+        description="Validate a generated stock-tax workbook export. The path "
+                    "must be passed explicitly; this script does not assume a "
+                    "canonical workbook lives at the repo root.",
+    )
+    ap.add_argument("path", help="Path to the workbook export to validate.")
     ap.add_argument("--unmatched-tolerance", type=float,
                     default=DEFAULT_UNMATCHED_TOLERANCE)
     args = ap.parse_args()

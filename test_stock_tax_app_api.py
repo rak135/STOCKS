@@ -34,7 +34,11 @@ def _copy_project_fixture(tmp_path: Path) -> Path:
 
 
 def _workbook_path(project: Path) -> Path:
-    return project / workbook_module.CANONICAL_OUTPUT_NAME
+    # Tests pre-seed a workbook at the same path the backend runtime
+    # uses as its export target so the runtime reads back the seeded
+    # state. The runtime default is no longer the legacy
+    # `stock_tax_system.xlsx` name.
+    return project / "stock_tax_export.xlsx"
 
 
 def _ensure_test_workbook(project: Path) -> Path:
@@ -388,10 +392,14 @@ def test_api_status_import_years_and_sales(tmp_path):
 
 def test_api_runs_without_root_workbook_and_only_exports_explicitly(tmp_path):
     project = _copy_project_fixture(tmp_path)
-    workbook_path = _workbook_path(project)
-    assert not workbook_path.exists()
+    legacy_workbook_path = project / workbook_module.CANONICAL_OUTPUT_NAME
+    assert not legacy_workbook_path.exists()
 
     client = TestClient(create_app(project_dir=project))
+    runtime = client.app.state.runtime
+    export_path = runtime.output_path
+    assert export_path.name != workbook_module.CANONICAL_OUTPUT_NAME
+    assert not export_path.exists()
 
     status = client.get("/api/status")
     years = client.get("/api/years")
@@ -405,11 +413,13 @@ def test_api_runs_without_root_workbook_and_only_exports_explicitly(tmp_path):
     assert status.json()["global_status"] in {"ready", "needs_review", "blocked"}
     assert years.json()["truth"]["status"] in {"ready", "needs_review", "partial", "blocked"}
     assert sales.json()["truth"]["status"] in {"ready", "needs_review", "partial", "blocked"}
-    assert not workbook_path.exists()
+    assert not legacy_workbook_path.exists()
+    assert not export_path.exists()
 
-    export_result = client.app.state.runtime.calculate(write_workbook=True)
+    export_result = runtime.calculate(write_workbook=True)
     assert export_result.tax_years.items
-    assert workbook_path.exists()
+    assert export_path.exists()
+    assert not legacy_workbook_path.exists()
 
 
 def test_sales_list_includes_financial_fields_and_matches_detail(tmp_path):
@@ -593,7 +603,7 @@ def test_ui_state_beats_conflicting_workbook_review_state(tmp_path):
 
     state = ui_state_module.UIState()
     state.set_review(sell_id, review_status="reviewed", note="UI is canonical")
-    ui_state_module.save(project / "stock_tax_system.xlsx", state)
+    ui_state_module.save(project / "stock_tax_export.xlsx", state)
 
     reloaded_client = TestClient(create_app(project_dir=project))
     detail = reloaded_client.get(f"/api/sales/{sell_id}").json()
@@ -602,7 +612,7 @@ def test_ui_state_beats_conflicting_workbook_review_state(tmp_path):
 
     workbook_result = workbook_module.calculate_workbook_data(
         inputs=sorted((project / ".csv").glob("*.csv")),
-        out_path=project / "stock_tax_system.xlsx",
+        out_path=project / "stock_tax_export.xlsx",
         fetch_missing_fx=False,
     )
     assert workbook_result.review_state[sell_id]["review_status"] == "reviewed"
@@ -669,7 +679,7 @@ def test_workbook_export_reflects_backend_ui_state(tmp_path):
     row = _find_workbook_review_state_row(project, sell_id)
     assert row is not None
 
-    wb = load_workbook(project / "stock_tax_system.xlsx")
+    wb = load_workbook(project / "stock_tax_export.xlsx")
     ws = wb["Review_State"]
     assert ws.cell(row=row, column=2).value == "reviewed"
     assert ws.cell(row=row, column=3).value == "Export me"
@@ -827,7 +837,7 @@ def test_project_state_fx_can_unblock_strict_daily_fx(tmp_path, monkeypatch):
 
     calc = workbook_module.calculate_workbook_data(
         inputs=sorted((project / ".csv").glob("*.csv")),
-        out_path=project / "stock_tax_system.xlsx",
+        out_path=project / "stock_tax_export.xlsx",
         fetch_missing_fx=False,
     )
     required_dates = sorted({tx.trade_date.isoformat() for tx in calc.txs if tx.trade_date.year == 2020})
@@ -877,7 +887,7 @@ def test_api_provenance_exposes_project_state_owned_domains(tmp_path, monkeypatc
 
     calc = workbook_module.calculate_workbook_data(
         inputs=sorted((project / ".csv").glob("*.csv")),
-        out_path=project / "stock_tax_system.xlsx",
+        out_path=project / "stock_tax_export.xlsx",
         fetch_missing_fx=False,
     )
     required_dates = sorted(
@@ -1474,7 +1484,7 @@ def test_workbook_export_reflects_project_state_fx(tmp_path):
     result = client.app.state.runtime.calculate(write_workbook=True)
     assert result.fx_years.items
 
-    wb = load_workbook(project / "stock_tax_system.xlsx")
+    wb = load_workbook(project / "stock_tax_export.xlsx")
     yearly_ws = wb["FX_Yearly"]
     daily_ws = wb["FX_Daily"]
 
@@ -1512,7 +1522,7 @@ def test_blocked_fx_run_skips_workbook_write_and_write_path_fails_cleanly(tmp_pa
         lambda year, timeout=15: {},
     )
 
-    workbook_path = project / "stock_tax_system.xlsx"
+    workbook_path = project / "stock_tax_export.xlsx"
     before_mtime = workbook_path.stat().st_mtime_ns
 
     client = TestClient(create_app(project_dir=project))
@@ -1573,7 +1583,7 @@ def test_stale_frozen_snapshot_manifest_persists_rebuild_required_check(tmp_path
 
     calc = workbook_module.calculate_workbook_data(
         inputs=sorted((project / ".csv").glob("*.csv")),
-        out_path=project / "stock_tax_system.xlsx",
+        out_path=project / "stock_tax_export.xlsx",
         fetch_missing_fx=False,
     )
     workbook_module.write_workbook(

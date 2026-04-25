@@ -1,4 +1,12 @@
-# Stock Tax Workbook — Operator Guide
+# Stock Tax Workbook — Operator Guide (Legacy CLI)
+
+> **Status:** legacy / manual workbook export workflow. The canonical
+> product runtime is the FastAPI backend plus React frontend (see
+> top-level `README.md`). The repo no longer ships or tracks a root
+> `stock_tax_system.xlsx`, and the backend does not require one to run.
+> This guide documents the manual `build_stock_tax_workbook.py` CLI for
+> operators who still want a workbook export. Pass `--output` to a path
+> of your choosing — there is no canonical default file in the repo.
 
 This workbook calculates **Czech personal income tax on stock trades**
 from Yahoo Portfolio CSV exports. It is a calculation workbook, **not**
@@ -10,14 +18,16 @@ official tax advice. Keep your broker statements separately as proof.
 py -3 build_stock_tax_workbook.py \
   --input .csv/XTB_CZK.csv .csv/XTB_USD.csv .csv/Lynx.csv \
           .csv/Revolut.csv .csv/Trading212.csv \
-  --output stock_tax_system.xlsx
+  --output exports/stock_tax_export.xlsx
 ```
 
-Before rebuilding, close `stock_tax_system.xlsx` in Excel.
-Rebuild always targets `stock_tax_system.xlsx` (canonical output).
-If Excel locks the file, build fails instead of creating an alternate final workbook.
+Pick any `--output` path you want; the example above uses
+`exports/stock_tax_export.xlsx` so it is obviously a generated export
+and not a tracked product file. Before rebuilding, close that workbook
+in Excel. If Excel locks the file, the build fails instead of creating
+an alternate final workbook.
 
-Open `stock_tax_system.xlsx`. Go through the sheets in order:
+Open the workbook export you just generated. Go through the sheets in order:
 
 1. **README** – on-sheet assumptions.
 2. **Operator_Dashboard** – headline tax per year, method comparison,
@@ -76,8 +86,8 @@ raw.
      Default FALSE for conservative reporting.
    - `Locked year?` – TRUE after filing. Locked years are frozen on
      the next regeneration.
-6. **Re-run.** Close `stock_tax_system.xlsx` in Excel, then rerun the
-  generator targeting `stock_tax_system.xlsx`. All computed sheets are
+6. **Re-run.** Close the export workbook in Excel, then rerun the
+  generator targeting the same `--output` path. All computed sheets are
   rebuilt; all editable sheets and frozen snapshots are preserved. If
   the workbook is locked, the run fails loudly and no alternate final
   workbook is created.

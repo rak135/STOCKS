@@ -18,7 +18,7 @@ def create_app(
 ) -> FastAPI:
     project = Path(project_dir or Path.cwd()).resolve()
     csv = Path(csv_dir or (project / ".csv")).resolve()
-    output = Path(output_path or (project / "stock_tax_system.xlsx")).resolve()
+    output = Path(output_path or (project / "stock_tax_export.xlsx")).resolve()
 
     app = FastAPI(title="Stock Tax App", version="0.1.0")
     app.state.runtime = BackendRuntime(project_dir=project, csv_dir=csv, output_path=output)
