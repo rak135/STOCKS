@@ -535,6 +535,8 @@ def test_unresolved_checks_still_appear_when_href_is_remapped(tmp_path):
 def test_patch_sale_review_updates_ui_state_only(tmp_path):
     project = _copy_project_fixture(tmp_path)
     client = TestClient(create_app(project_dir=project))
+    runtime_output = client.app.state.runtime.output_path
+    assert not runtime_output.exists()
 
     sales_before = _items(client.get("/api/sales").json())
     sell_id = sales_before[0]["id"]
@@ -555,6 +557,7 @@ def test_patch_sale_review_updates_ui_state_only(tmp_path):
     ui_state_text = ui_state_path.read_text(encoding="utf-8")
     assert sell_id in ui_state_text
     assert "Checked in UI" in ui_state_text
+    assert not runtime_output.exists()
 
     detail_after = client.get(f"/api/sales/{sell_id}").json()
     years_after = client.get("/api/years").json()
@@ -603,7 +606,7 @@ def test_ui_state_beats_conflicting_workbook_review_state(tmp_path):
 
     state = ui_state_module.UIState()
     state.set_review(sell_id, review_status="reviewed", note="UI is canonical")
-    ui_state_module.save(project / "stock_tax_export.xlsx", state)
+    ui_state_module.save(project, state)
 
     reloaded_client = TestClient(create_app(project_dir=project))
     detail = reloaded_client.get(f"/api/sales/{sell_id}").json()
@@ -708,6 +711,113 @@ def test_legacy_workbook_review_state_migrates_when_ui_state_missing(tmp_path):
     assert payload["sells"][sell_id]["review_status"] == "flagged"
     assert payload["sells"][sell_id]["note"] == "Migrated from workbook"
     assert raw_sell_id not in payload["sells"]
+
+
+def test_ui_state_stored_at_project_root_when_output_path_is_nested(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    nested_output = project / "exports" / "stock_tax_export.xlsx"
+    client = TestClient(create_app(project_dir=project, output_path=nested_output))
+
+    sell_id = _items(client.get("/api/sales").json())[0]["id"]
+    patched = client.patch(
+        f"/api/sales/{sell_id}/review",
+        json={"review_status": "reviewed", "note": "Root path only"},
+    )
+    assert patched.status_code == 200
+
+    assert (project / ".ui_state.json").exists()
+    assert not (nested_output.parent / ".ui_state.json").exists()
+
+
+def test_ui_state_persists_when_output_path_changes(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    output_a = project / "exports_a" / "stock_tax_export.xlsx"
+    output_b = project / "exports_b" / "stock_tax_export.xlsx"
+
+    client_a = TestClient(create_app(project_dir=project, output_path=output_a))
+    sell_id = _items(client_a.get("/api/sales").json())[0]["id"]
+    patched = client_a.patch(
+        f"/api/sales/{sell_id}/review",
+        json={"review_status": "flagged", "note": "Stable across output path"},
+    )
+    assert patched.status_code == 200
+
+    client_b = TestClient(create_app(project_dir=project, output_path=output_b))
+    detail = client_b.get(f"/api/sales/{sell_id}")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["review_status"] == "flagged"
+    assert body["note"] == "Stable across output path"
+
+    assert (project / ".ui_state.json").exists()
+    assert not (output_a.parent / ".ui_state.json").exists()
+    assert not (output_b.parent / ".ui_state.json").exists()
+
+
+def test_legacy_sidecar_ui_state_adopted_only_when_root_missing(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    nested_output = project / "exports" / "stock_tax_export.xlsx"
+    legacy_sidecar = nested_output.parent / ".ui_state.json"
+    legacy_sidecar.parent.mkdir(parents=True, exist_ok=True)
+    legacy_payload = {
+        "schema_version": 1,
+        "sells": {
+            "LEGACY_SELL": {
+                "review_status": "flagged",
+                "note": "adopt from sidecar",
+            }
+        },
+        "years": {},
+    }
+    legacy_sidecar.write_text(json.dumps(legacy_payload), encoding="utf-8")
+    root_ui_state = project / ".ui_state.json"
+    assert not root_ui_state.exists()
+
+    client = TestClient(create_app(project_dir=project, output_path=nested_output))
+    status = client.get("/api/status")
+    assert status.status_code == 200
+
+    assert root_ui_state.exists()
+    adopted = json.loads(root_ui_state.read_text(encoding="utf-8"))
+    assert adopted["sells"]["LEGACY_SELL"]["review_status"] == "flagged"
+    assert adopted["sells"]["LEGACY_SELL"]["note"] == "adopt from sidecar"
+
+
+def test_root_ui_state_wins_over_legacy_sidecar(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    nested_output = project / "exports" / "stock_tax_export.xlsx"
+
+    bootstrap_client = TestClient(create_app(project_dir=project, output_path=nested_output))
+    sell_id = _items(bootstrap_client.get("/api/sales").json())[0]["id"]
+
+    root_state = ui_state_module.UIState()
+    root_state.set_review(sell_id, review_status="reviewed", note="root wins")
+    ui_state_module.save(project, root_state)
+
+    legacy_sidecar = nested_output.parent / ".ui_state.json"
+    legacy_sidecar.parent.mkdir(parents=True, exist_ok=True)
+    legacy_payload = {
+        "schema_version": 1,
+        "sells": {
+            sell_id: {
+                "review_status": "flagged",
+                "note": "legacy sidecar loses",
+            }
+        },
+        "years": {},
+    }
+    legacy_sidecar.write_text(json.dumps(legacy_payload), encoding="utf-8")
+
+    client = TestClient(create_app(project_dir=project, output_path=nested_output))
+    detail = client.get(f"/api/sales/{sell_id}")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["review_status"] == "reviewed"
+    assert body["note"] == "root wins"
+
+    persisted_root_payload = json.loads((project / ".ui_state.json").read_text(encoding="utf-8"))
+    assert persisted_root_payload["sells"][sell_id]["review_status"] == "reviewed"
+    assert persisted_root_payload["sells"][sell_id]["note"] == "root wins"
 
 
 def test_fx_resolver_missing_daily_rate_is_explicit_not_22():

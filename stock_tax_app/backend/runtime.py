@@ -41,7 +41,7 @@ class BackendRuntime:
         review_status: str | None = None,
         note: str | None = None,
     ) -> EngineResult:
-        state = ui_state.load(self.output_path)
+        state = ui_state.load(self.project_dir, legacy_workbook_path=self.output_path)
         state.set_review(sell_id, review_status=review_status, note=note)
-        ui_state.save(self.output_path, state)
+        ui_state.save(self.project_dir, state)
         return self.calculate(write_workbook=False)

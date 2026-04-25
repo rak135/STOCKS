@@ -1272,12 +1272,13 @@ def run(
     calc = workbook.calculate_workbook_data(
         inputs=inputs,
         out_path=output,
+        project_dir=project_path,
         fetch_missing_fx=True,
     )
     if write_workbook and not calc.calculation_blocked:
         workbook.write_calculation_result(calc, backup_existing=False)
 
-    state = ui_state.load(output)
+    state = ui_state.load(project_path, legacy_workbook_path=output)
     project_state = project_store.load_project_state(project_path)
     legacy_user_state = workbook.load_existing_user_state(output)
     checks = _build_checks(calc)

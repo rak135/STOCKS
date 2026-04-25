@@ -1201,10 +1201,12 @@ def calculate_workbook_data(
     inputs: List[Path],
     out_path: Path,
     *,
+    project_dir: Path | None = None,
     fetch_missing_fx: bool = True,
 ) -> CalculationResult:
+    project_root = Path(project_dir).resolve() if project_dir is not None else out_path.parent.resolve()
     legacy_user_state = load_existing_user_state(out_path)
-    project_state = project_store.load_project_state(out_path.parent)
+    project_state = project_store.load_project_state(project_root)
     user_state = project_store.merge_project_state_with_legacy_fallback(
         project_state,
         legacy_user_state,
@@ -1276,7 +1278,11 @@ def calculate_workbook_data(
     frozen_snapshots = load_frozen_snapshots(user_state)
     legacy_review_state = load_review_state(user_state)
     canonical_ui_state, adopted_review_count, review_conflict_count = (
-        ui_state.load_with_legacy_review_fallback(out_path, legacy_review_state)
+        ui_state.load_with_legacy_review_fallback(
+            project_root,
+            legacy_workbook_path=out_path,
+            legacy_review_state=legacy_review_state,
+        )
     )
     if review_conflict_count:
         print(

@@ -1,6 +1,6 @@
 """Local JSON persistence for UI-only state.
 
-`.ui_state.json` sits next to the Excel workbook. It holds whatever the
+`.ui_state.json` lives at the project root. It holds whatever the
 operator has done in the UI that is *not* part of the tax calculation:
 
 - reviewed / flagged / unreviewed per sell
@@ -11,6 +11,10 @@ operator has done in the UI that is *not* part of the tax calculation:
 
 These fields never feed into :func:`stock_tax_app.engine.core.run`. They
 are layered onto the :class:`EngineResult` *after* calculation.
+
+Backward compatibility: if a legacy sidecar `.ui_state.json` exists next
+to the workbook path, it is adopted only when project-root state is
+missing.
 """
 
 from __future__ import annotations
@@ -107,7 +111,9 @@ def export_review_state(state: UIState) -> Dict[str, Dict[str, str]]:
 
 
 def load_with_legacy_review_fallback(
-    workbook_path: Path,
+    project_dir: Path,
+    *,
+    legacy_workbook_path: Path | None = None,
     legacy_review_state: Dict[str, Dict[str, Any]] | None = None,
 ) -> tuple[UIState, int, int]:
     """Load canonical UI state and optionally adopt legacy workbook reviews.
@@ -116,7 +122,7 @@ def load_with_legacy_review_fallback(
     for sell IDs that do not already exist in the backend-owned UI state.
     Conflicting workbook values are ignored.
     """
-    state = load(workbook_path)
+    state = load(project_dir, legacy_workbook_path=legacy_workbook_path)
     adopted = 0
     conflicts = 0
     dirty = False
@@ -138,7 +144,7 @@ def load_with_legacy_review_fallback(
         ):
             conflicts += 1
     if dirty:
-        save(workbook_path, state)
+        save(project_dir, state)
     return state, adopted, conflicts
 
 
@@ -146,20 +152,26 @@ def load_with_legacy_review_fallback(
 # Disk I/O
 # ---------------------------------------------------------------------
 
-def state_path_for(workbook_path: Path) -> Path:
-    return workbook_path.parent / UI_STATE_FILENAME
+def ui_state_path(project_dir: Path | str) -> Path:
+    return Path(project_dir).resolve() / UI_STATE_FILENAME
 
 
-def load(workbook_path: Path) -> UIState:
-    """Load the UI state next to *workbook_path*. Missing/corrupt file
-    returns an empty :class:`UIState` — never raises."""
-    p = state_path_for(workbook_path)
-    if not p.exists():
-        return UIState()
+def legacy_sidecar_path(workbook_path: Path | str) -> Path:
+    return Path(workbook_path).resolve().parent / UI_STATE_FILENAME
+
+
+def state_path_for(project_dir: Path | str) -> Path:
+    # Backward-compatible alias for older call sites.
+    return ui_state_path(project_dir)
+
+
+def _load_from_path(path: Path) -> tuple[UIState, bool]:
+    if not path.exists():
+        return UIState(), False
     try:
-        raw = json.loads(p.read_text(encoding="utf-8"))
+        raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return UIState()
+        return UIState(), False
 
     sells = {
         canonical_sell_id(sid): _normalized_sell_review(
@@ -179,16 +191,45 @@ def load(workbook_path: Path) -> UIState:
             note=str(obj.get("note") or ""),
             accepted_difference_czk=obj.get("accepted_difference_czk"),
         )
-    return UIState(
-        sells=sells,
-        years=years,
-        schema_version=int(raw.get("schema_version") or _SCHEMA_VERSION),
+    return (
+        UIState(
+            sells=sells,
+            years=years,
+            schema_version=int(raw.get("schema_version") or _SCHEMA_VERSION),
+        ),
+        True,
     )
 
 
-def save(workbook_path: Path, state: UIState) -> None:
-    """Atomically write the state next to *workbook_path*."""
-    p = state_path_for(workbook_path)
+def load(project_dir: Path | str, *, legacy_workbook_path: Path | str | None = None) -> UIState:
+    """Load project-root UI state, optionally adopting a legacy sidecar.
+
+    If both project-root and legacy sidecar state exist, project-root wins.
+    Missing/corrupt files return an empty :class:`UIState`.
+    """
+    canonical_path = ui_state_path(project_dir)
+    state, loaded = _load_from_path(canonical_path)
+    if loaded:
+        return state
+
+    if legacy_workbook_path is None:
+        return UIState()
+
+    legacy_path = legacy_sidecar_path(legacy_workbook_path)
+    if legacy_path == canonical_path:
+        return UIState()
+
+    legacy_state, legacy_loaded = _load_from_path(legacy_path)
+    if not legacy_loaded:
+        return UIState()
+
+    save(project_dir, legacy_state)
+    return legacy_state
+
+
+def save(project_dir: Path | str, state: UIState) -> None:
+    """Atomically write project-root UI state."""
+    p = ui_state_path(project_dir)
     p.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema_version": _SCHEMA_VERSION,
