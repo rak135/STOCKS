@@ -223,6 +223,29 @@ def test_api_status_import_years_and_sales(tmp_path):
     assert len(_items(sales.json())) > 0
 
 
+def test_sales_list_includes_financial_fields_and_matches_detail(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    client = TestClient(create_app(project_dir=project))
+
+    sales_response = client.get("/api/sales")
+    assert sales_response.status_code == 200
+    sales_items = _items(sales_response.json())
+    assert sales_items
+
+    summary = sales_items[0]
+    assert "total_cost_basis_czk" in summary
+    assert "total_gain_loss_czk" in summary
+    assert isinstance(summary["total_cost_basis_czk"], (int, float))
+    assert isinstance(summary["total_gain_loss_czk"], (int, float))
+
+    detail_response = client.get(f"/api/sales/{summary['id']}")
+    assert detail_response.status_code == 200
+    detail = detail_response.json()
+
+    assert summary["total_cost_basis_czk"] == detail["total_cost_basis_czk"]
+    assert summary["total_gain_loss_czk"] == detail["total_gain_loss_czk"]
+
+
 def test_policy_module_is_canonical_year_source_of_truth():
     assert policy.is_filed(2024) is True
     assert policy.is_locked(2024) is True
@@ -579,6 +602,24 @@ def test_blocked_collections_expose_truth_metadata_not_ambiguous_empty_success(t
         assert payload["truth"]["status"] == "blocked"
         assert payload["truth"]["empty_meaning"] == "blocked"
         assert payload["truth"]["reasons"]
+
+
+def test_sales_list_blocked_empty_has_no_financial_rows(tmp_path, monkeypatch):
+    project = _copy_project_fixture(tmp_path)
+    _set_year_fx_method(project, 2020, "FX_DAILY_CNB")
+    _clear_fx_daily_rows(project)
+    monkeypatch.setattr(
+        workbook_module,
+        "download_cnb_daily_rates_year",
+        lambda year, timeout=15: {},
+    )
+
+    client = TestClient(create_app(project_dir=project))
+    sales_body = client.get("/api/sales").json()
+
+    assert sales_body["items"] == []
+    assert sales_body["truth"]["status"] == "blocked"
+    assert sales_body["truth"]["empty_meaning"] == "blocked"
 
 
 def test_project_state_fx_can_unblock_strict_daily_fx(tmp_path, monkeypatch):

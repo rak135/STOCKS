@@ -1,12 +1,14 @@
+import { Chip, StatusDot } from './ui'
+
 type Status = 'ready' | 'needs_review' | 'blocked'
 
-const statusClasses: Record<Status, string> = {
-  ready: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-  needs_review: 'border-amber-200 bg-amber-50 text-amber-700',
-  blocked: 'border-rose-200 bg-rose-50 text-rose-700',
+const tones: Record<Status, 'ok' | 'warn' | 'err'> = {
+  ready: 'ok',
+  needs_review: 'warn',
+  blocked: 'err',
 }
 
-const statusLabels: Record<Status, string> = {
+const labels: Record<Status, string> = {
   ready: 'Ready',
   needs_review: 'Needs review',
   blocked: 'Blocked',
@@ -14,8 +16,9 @@ const statusLabels: Record<Status, string> = {
 
 export function StatusPill({ status }: { status: Status }) {
   return (
-    <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${statusClasses[status]}`}>
-      {statusLabels[status]}
-    </span>
+    <Chip tone={tones[status]}>
+      <StatusDot status={status} />
+      {labels[status]}
+    </Chip>
   )
 }

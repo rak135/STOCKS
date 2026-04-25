@@ -617,6 +617,7 @@ def _build_sales(
         sells.append(
             Sell(
                 id=sell_id,
+                sell_id=sell_id,
                 year=tx.trade_date.year,
                 date=tx.trade_date,
                 ticker=tx.symbol,

@@ -14,13 +14,30 @@ export type TruthReason = {
   message: string
 }
 
+export type TruthSource =
+  | 'project_state'
+  | 'ui_state'
+  | 'workbook_fallback'
+  | 'calculated'
+  | 'generated_default'
+  | 'cnb_cache'
+  | 'static_config'
+  | 'unavailable'
+
 export type CollectionTruth = {
   status: TruthStatus
   reasons: TruthReason[]
-  sources: string[]
+  sources: TruthSource[]
   summary: string | null
   item_count: number
   empty_meaning: 'not_empty' | 'no_data' | 'blocked' | 'unknown' | 'not_implemented'
+}
+
+export type TruthMeta = {
+  status: TruthStatus
+  reasons: TruthReason[]
+  sources: TruthSource[]
+  summary: string | null
 }
 
 export type NextAction = {
@@ -63,12 +80,7 @@ export type ImportSummary = {
   total_trade_rows: number
   total_ignored_rows: number
   total_warnings: number
-  truth: {
-    status: TruthStatus
-    reasons: TruthReason[]
-    sources: string[]
-    summary: string | null
-  }
+  truth: TruthMeta
 }
 
 export type MethodComparison = {
@@ -108,4 +120,166 @@ export type TaxYear = {
 export type TaxYearsResponse = {
   items: TaxYear[]
   truth: CollectionTruth
+}
+
+export type ReviewStatus = 'unreviewed' | 'reviewed' | 'flagged'
+
+export type SellClassification = 'taxable' | 'exempt' | 'mixed'
+
+export type SourceRef = {
+  file: string
+  row: number
+}
+
+export type MatchedLot = {
+  lot_id: string
+  buy_date: string
+  broker: string
+  source: SourceRef
+  quantity: number
+  buy_price_usd: number
+  sell_price_usd: number
+  fx_buy: number
+  fx_sell: number
+  cost_basis_czk: number
+  proceeds_czk: number
+  holding_days: number
+  time_test_exempt: boolean
+  gain_loss_czk: number
+}
+
+export type SellSummary = {
+  id: string
+  sell_id: string
+  year: number
+  date: string
+  ticker: string
+  instrument_id: string
+  broker: string
+  quantity: number
+  price_usd: number
+  proceeds_czk: number
+  total_gain_loss_czk: number
+  total_cost_basis_czk: number
+  method: 'FIFO' | 'LIFO' | 'MIN_GAIN' | 'MAX_GAIN' | 'MIXED'
+  matched_quantity: number
+  unmatched_quantity: number
+  classification: SellClassification
+  review_status: ReviewStatus
+  truth_status: TruthStatus
+  instrument_map_source: TruthSource
+  review_state_source: TruthSource
+}
+
+export type Sell = SellSummary & {
+  source: SourceRef
+  note: string
+  matched_lots: MatchedLot[]
+  truth: TruthMeta
+}
+
+export type SellList = {
+  items: SellSummary[]
+  truth: CollectionTruth
+}
+
+export type SellReviewPatchRequest = {
+  review_status: ReviewStatus | null
+  note: string | null
+}
+
+export type FxMethod = 'FX_DAILY_CNB' | 'FX_UNIFIED_GFR'
+
+export type FxYear = {
+  year: number
+  method: FxMethod
+  unified_rate: number | null
+  daily_cached: number
+  daily_expected: number
+  missing_dates: string[]
+  source_label: string
+  source_url: string | null
+  verified_at: string | null
+  manual_override: boolean
+  locked: boolean
+  truth_status: TruthStatus
+  rate_source: TruthSource
+  status_reason: string | null
+}
+
+export type FxYearList = {
+  items: FxYear[]
+  truth: CollectionTruth
+}
+
+export type OpenPositionStatus = 'ok' | 'warn' | 'error' | 'unknown'
+
+export type OpenLot = {
+  lot_id: string
+  buy_date: string
+  broker: string
+  quantity: number
+  cost_basis_czk: number
+  unrealised_pl_czk: number | null
+}
+
+export type OpenPosition = {
+  ticker: string
+  instrument_id: string
+  calculated_qty: number
+  yahoo_qty: number | null
+  difference: number | null
+  status: OpenPositionStatus
+  lots: OpenLot[]
+  truth_status: TruthStatus
+  status_reason_code: string | null
+  status_reason: string | null
+  instrument_map_source: TruthSource
+  inventory_source: TruthSource
+}
+
+export type OpenPositionList = {
+  items: OpenPosition[]
+  truth: CollectionTruth
+}
+
+export type AuditSummary = {
+  year_rows: TaxYear[]
+  trace_counts: Record<string, number>
+  locked_snapshots: number[]
+  truth_status: TruthStatus
+  summary_only: boolean
+  status_reasons: TruthReason[]
+  workbook_backed_domains: string[]
+}
+
+export type SettingEditability = 'editable' | 'read_only' | 'display_only' | 'not_implemented'
+
+export type SettingFieldTruth = {
+  editability: SettingEditability
+  source: TruthSource
+  status: TruthStatus
+  reason: string | null
+}
+
+export type ExcelValidation = 'strict' | 'warn' | 'off'
+
+export type AppSettings = {
+  project_folder: string
+  csv_folder: string
+  output_path: string
+  cache_folder: string
+  default_tax_rate: number
+  default_fx_method: FxMethod
+  default_100k: boolean
+  unmatched_qty_tolerance: number
+  position_reconciliation_tolerance: number
+  backup_on_recalc: boolean
+  require_confirm_unlock: boolean
+  keep_n_snapshots: number
+  excel_validation: ExcelValidation
+  truth_status: TruthStatus
+  status_reasons: TruthReason[]
+  field_meta: Record<string, SettingFieldTruth>
+  domain_sources: Record<string, TruthSource>
 }

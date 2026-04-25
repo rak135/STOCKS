@@ -20,6 +20,7 @@ def get_sales(request: Request) -> SellList:
         items=[
             SellSummary(
                 id=sell.id,
+                sell_id=sell.id,
                 year=sell.year,
                 date=sell.date,
                 ticker=sell.ticker,
@@ -28,6 +29,8 @@ def get_sales(request: Request) -> SellList:
                 quantity=sell.quantity,
                 price_usd=sell.price_usd,
                 proceeds_czk=sell.proceeds_czk,
+                total_gain_loss_czk=sell.total_gain_loss_czk,
+                total_cost_basis_czk=sell.total_cost_basis_czk,
                 method=sell.method,
                 matched_quantity=sell.matched_quantity,
                 unmatched_quantity=sell.unmatched_quantity,

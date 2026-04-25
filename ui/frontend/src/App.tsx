@@ -1,132 +1,167 @@
 import { createBrowserRouter, Navigate, NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
-  ArrowUpRight,
-  BadgeCheck,
   CalendarClock,
   ChartNoAxesColumn,
+  CheckCircle2,
   FileSearch,
   Files,
+  FolderOpen,
   Landmark,
+  LoaderCircle,
+  RefreshCw,
   SearchCheck,
   Settings,
+  TrendingUp,
+  TriangleAlert,
 } from 'lucide-react'
-import { StatusPill } from './components/status-pill'
-import { useStatusQuery } from './lib/api'
-import { ComingNextScreen } from './screens/coming-next-screen'
+import type { ComponentType, SVGProps } from 'react'
+import { Button, Chip, StatusDot } from './components/ui'
+import { ApiError, useRecalculateMutation, useStatusQuery } from './lib/api'
+import { AuditScreen } from './screens/audit-screen'
+import { FxScreen } from './screens/fx-screen'
 import { ImportScreen } from './screens/import-screen'
+import { OpenPositionsScreen } from './screens/open-positions-screen'
 import { OverviewScreen } from './screens/overview-screen'
+import { SalesReviewScreen } from './screens/sales-review-screen'
+import { SettingsScreen } from './screens/settings-screen'
 import { TaxYearsScreen } from './screens/tax-years-screen'
+import { compactPath, formatDateTime } from './lib/format'
+
+type IconCmp = ComponentType<SVGProps<SVGSVGElement>>
 
 type NavItem = {
   label: string
   path: string
-  description: string
-  icon: typeof ChartNoAxesColumn
+  icon: IconCmp
 }
 
 const navItems: NavItem[] = [
-  {
-    label: 'Overview',
-    path: '/',
-    description: 'Current safety and next step',
-    icon: ChartNoAxesColumn,
-  },
-  {
-    label: 'Import',
-    path: '/import',
-    description: 'Check source CSV files',
-    icon: Files,
-  },
-  {
-    label: 'Tax Years',
-    path: '/tax-years',
-    description: 'Policy, filing, and reconciliation',
-    icon: CalendarClock,
-  },
-  {
-    label: 'Sales Review',
-    path: '/sales-review',
-    description: 'Evidence packets are next',
-    icon: SearchCheck,
-  },
-  {
-    label: 'Open Positions',
-    path: '/open-positions',
-    description: 'Residual holdings and warnings',
-    icon: BadgeCheck,
-  },
-  {
-    label: 'FX Rates',
-    path: '/fx',
-    description: 'Defensible rate sourcing',
-    icon: Landmark,
-  },
-  {
-    label: 'Audit Pack',
-    path: '/audit',
-    description: 'Exports and traceability',
-    icon: FileSearch,
-  },
-  {
-    label: 'Settings',
-    path: '/settings',
-    description: 'Project and tolerance knobs',
-    icon: Settings,
-  },
+  { label: 'Overview', path: '/', icon: ChartNoAxesColumn },
+  { label: 'Import', path: '/import', icon: Files },
+  { label: 'Tax Years', path: '/tax-years', icon: CalendarClock },
+  { label: 'Sales Review', path: '/sales-review', icon: SearchCheck },
+  { label: 'Open Positions', path: '/open-positions', icon: TrendingUp },
+  { label: 'FX Rates', path: '/fx', icon: Landmark },
+  { label: 'Audit Pack', path: '/audit', icon: FileSearch },
+  { label: 'Settings', path: '/settings', icon: Settings },
 ]
 
-function Sidebar() {
+function Sidebar({ projectPath, lastCalculated }: { projectPath: string | null; lastCalculated: string | null }) {
   const location = useLocation()
 
   return (
-    <aside className="flex w-full shrink-0 flex-col gap-6 rounded-[2rem] border border-white/60 bg-white/75 p-5 shadow-[0_30px_80px_rgba(44,54,39,0.10)] backdrop-blur lg:w-[292px]">
-      <div className="space-y-3">
-        <div className="inline-flex items-center rounded-full border border-stone-200/80 bg-stone-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-stone-500">
-          Stock Tax Cockpit
-        </div>
-        <div>
-          <h1 className="font-display text-2xl text-stone-900">Operator workspace</h1>
-          <p className="mt-2 text-sm leading-6 text-stone-600">
-            Calm, local-first workflow for validating stock-tax outputs without turning the UI into a spreadsheet.
-          </p>
+    <aside className="w-60 shrink-0 border-r border-borderc bg-surface flex flex-col">
+      <div className="px-4 pt-5 pb-4">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-md bg-accent text-white grid place-items-center text-[11px] font-semibold">
+            CZ
+          </div>
+          <div className="leading-tight">
+            <div className="text-[13px] font-semibold text-ink">Stocks Tax</div>
+            <div className="text-[11px] text-ink3">Operator cockpit</div>
+          </div>
         </div>
       </div>
 
-      <nav className="grid gap-2">
+      <nav className="px-2 py-2 flex-1 overflow-auto">
         {navItems.map((item) => {
           const active = location.pathname === item.path
           const Icon = item.icon
-
           return (
             <NavLink
               key={item.path}
               to={item.path}
-              className={`group rounded-[1.4rem] border px-4 py-3 transition duration-200 ${
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] focus-ring ${
                 active
-                  ? 'border-stone-900 bg-stone-900 text-stone-50 shadow-[0_18px_40px_rgba(28,25,23,0.22)]'
-                  : 'border-transparent bg-stone-50/70 text-stone-700 hover:border-stone-200 hover:bg-white'
+                  ? 'bg-accent-bg text-ink font-medium'
+                  : 'text-ink2 hover:bg-borderc/40 hover:text-ink'
               }`}
             >
-              <div className="flex items-start gap-3">
-                <div
-                  className={`mt-0.5 rounded-xl p-2 ${
-                    active ? 'bg-white/10 text-stone-50' : 'bg-stone-900/5 text-stone-600'
-                  }`}
-                >
-                  <Icon className="h-4 w-4" />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold">{item.label}</div>
-                  <p className={`mt-1 text-xs leading-5 ${active ? 'text-stone-300' : 'text-stone-500'}`}>
-                    {item.description}
-                  </p>
-                </div>
-              </div>
+              <Icon className="w-4 h-4" />
+              {item.label}
             </NavLink>
           )
         })}
       </nav>
+
+      <div className="px-4 py-3 border-t border-borderc text-[11px] text-ink3 space-y-0.5">
+        <div className="truncate" title={projectPath ?? undefined}>
+          {projectPath ? compactPath(projectPath) : 'No project path'}
+        </div>
+        <div>Last calc {lastCalculated ? formatDateTime(lastCalculated) : '—'}</div>
+      </div>
     </aside>
+  )
+}
+
+function TopBar() {
+  const { data: status } = useStatusQuery()
+  const recalculate = useRecalculateMutation()
+  const tone = status
+    ? ({ ready: 'ok', needs_review: 'warn', blocked: 'err' } as const)[status.global_status]
+    : 'neutral'
+  const label = status
+    ? ({ ready: 'Ready', needs_review: 'Needs review', blocked: 'Blocked' } as const)[status.global_status]
+    : 'Loading…'
+  const projectName = status?.project_path ? compactPath(status.project_path) : 'Stocks Tax'
+
+  const mutationError = recalculate.error
+  const errorText =
+    mutationError instanceof ApiError
+      ? `Recalculation failed (HTTP ${mutationError.status}${mutationError.detail ? `: ${mutationError.detail}` : ''})`
+      : 'Recalculation failed.'
+
+  async function handleRecalculate() {
+    recalculate.reset()
+    await recalculate.mutateAsync()
+  }
+
+  return (
+    <header className="flex items-center justify-between border-b border-borderc bg-surface/90 backdrop-blur px-6 h-16 shrink-0">
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="text-[13px] text-ink2">Project</div>
+        <div className="text-[14px] font-medium text-ink truncate">{projectName}</div>
+        <Chip tone={tone}>
+          {status ? <StatusDot status={status.global_status} /> : null}
+          {label}
+        </Chip>
+      </div>
+      <div className="flex flex-col items-end gap-1">
+        <div className="flex items-center gap-2">
+        <Button variant="secondary" disabled title="Open CSV folder is a backend integration; reserved.">
+          <FolderOpen className="w-4 h-4" />
+          Open CSV folder
+        </Button>
+          <Button
+            variant="secondary"
+            disabled={recalculate.isPending}
+            title="Recalculate from current project data. Runs backend calculation and refreshes app data."
+            onClick={() => {
+              void handleRecalculate()
+            }}
+          >
+            {recalculate.isPending ? (
+              <LoaderCircle className="w-4 h-4 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4" />
+            )}
+            {recalculate.isPending ? 'Recalculating...' : 'Recalculate'}
+          </Button>
+        </div>
+        {recalculate.isSuccess ? (
+          <div className="text-[11px] text-ok inline-flex items-center gap-1">
+            <CheckCircle2 className="w-3 h-3" />
+            Recalculation completed. App data refreshed.
+          </div>
+        ) : null}
+        {recalculate.isError ? (
+          <div className="text-[11px] text-err inline-flex items-center gap-1" role="alert" aria-live="polite">
+            <TriangleAlert className="w-3 h-3" />
+            {errorText}
+          </div>
+        ) : null}
+      </div>
+    </header>
   )
 }
 
@@ -134,44 +169,16 @@ function AppFrame() {
   const { data: status } = useStatusQuery()
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(236,253,245,0.9),_transparent_34%),radial-gradient(circle_at_top_right,_rgba(254,249,195,0.55),_transparent_28%),linear-gradient(180deg,_#f7f4ee_0%,_#f2eee7_45%,_#ece7df_100%)] px-4 py-4 text-stone-900 sm:px-6 lg:px-8">
-      <div className="mx-auto flex min-h-[calc(100vh-2rem)] max-w-[1500px] flex-col gap-4 lg:flex-row">
-        <Sidebar />
-        <main className="flex min-h-[70vh] flex-1 flex-col rounded-[2rem] border border-white/60 bg-[rgba(255,252,248,0.86)] p-4 shadow-[0_36px_80px_rgba(61,52,45,0.12)] backdrop-blur sm:p-6">
-          <header className="mb-6 flex flex-col gap-4 border-b border-stone-200/80 pb-6 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-stone-500">Frontend foundation</p>
-              <h2 className="mt-2 font-display text-3xl text-stone-900">Desktop calm, backend truth</h2>
-              <p className="mt-3 max-w-3xl text-sm leading-6 text-stone-600">
-                The implemented screens below read real data from FastAPI. Workbook logic stays on the server, and filed 2024 remains frozen as LIFO.
-              </p>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-[1.5rem] border border-stone-200/80 bg-white/80 px-4 py-3">
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">API status</div>
-                <div className="mt-2 flex items-center gap-3">
-                  <StatusPill status={status?.global_status ?? 'needs_review'} />
-                  <span className="text-sm text-stone-600">{status?.last_calculated_at ? 'Connected to live backend' : 'Waiting for backend response'}</span>
-                </div>
-              </div>
-              <div className="rounded-[1.5rem] border border-stone-200/80 bg-white/80 px-4 py-3">
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">Contract</div>
-                <div className="mt-2 flex items-center justify-between gap-3 text-sm text-stone-600">
-                  <span>No frontend Excel parsing</span>
-                  <ArrowUpRight className="h-4 w-4 text-stone-400" />
-                </div>
-              </div>
-            </div>
-          </header>
+    <div className="h-screen flex bg-bg text-ink">
+      <Sidebar projectPath={status?.project_path ?? null} lastCalculated={status?.last_calculated_at ?? null} />
+      <div className="flex-1 flex flex-col min-w-0">
+        <TopBar />
+        <main className="flex-1 min-h-0 overflow-auto">
           <Outlet />
         </main>
       </div>
     </div>
   )
-}
-
-function comingNext(title: string, description: string) {
-  return <ComingNextScreen title={title} description={description} />
 }
 
 export const router = createBrowserRouter([
@@ -182,41 +189,11 @@ export const router = createBrowserRouter([
       { index: true, element: <OverviewScreen /> },
       { path: 'import', element: <ImportScreen /> },
       { path: 'tax-years', element: <TaxYearsScreen /> },
-      {
-        path: 'sales-review',
-        element: comingNext(
-          'Sales Review',
-          'Evidence packets and per-sale review tools will land here next, after the first three screens.',
-        ),
-      },
-      {
-        path: 'open-positions',
-        element: comingNext(
-          'Open Positions',
-          'The layout is reserved for residual holdings and reconciliation warnings.',
-        ),
-      },
-      {
-        path: 'fx',
-        element: comingNext(
-          'FX Rates',
-          'FX sourcing cards and year-level provenance will be added on this foundation.',
-        ),
-      },
-      {
-        path: 'audit',
-        element: comingNext(
-          'Audit Pack',
-          'Audit exports and trace counters are intentionally deferred until after the core read-only flow.',
-        ),
-      },
-      {
-        path: 'settings',
-        element: comingNext(
-          'Settings',
-          'Project path controls and tolerance tuning stay reserved here for the next milestone.',
-        ),
-      },
+      { path: 'sales-review', element: <SalesReviewScreen /> },
+      { path: 'open-positions', element: <OpenPositionsScreen /> },
+      { path: 'fx', element: <FxScreen /> },
+      { path: 'audit', element: <AuditScreen /> },
+      { path: 'settings', element: <SettingsScreen /> },
       { path: '*', element: <Navigate to="/" replace /> },
     ],
   },

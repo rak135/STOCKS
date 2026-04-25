@@ -221,6 +221,7 @@ class MatchedLot(ApiModel):
 class SellSummary(ApiModel):
     """Compact shape returned from GET /api/sales (list)."""
     id: str
+    sell_id: str
     year: int
     date: date
     ticker: str
@@ -229,6 +230,8 @@ class SellSummary(ApiModel):
     quantity: float
     price_usd: float
     proceeds_czk: float
+    total_gain_loss_czk: float
+    total_cost_basis_czk: float
     method: Method
     matched_quantity: float
     unmatched_quantity: float
@@ -243,8 +246,6 @@ class Sell(SellSummary):
     """Full shape returned from GET /api/sales/{id}."""
     source: SourceRef
     note: str = ""
-    total_gain_loss_czk: float
-    total_cost_basis_czk: float
     matched_lots: List[MatchedLot]
     truth: TruthMeta = Field(default_factory=lambda: TruthMeta(status="ready"))
 

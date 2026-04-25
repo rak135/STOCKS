@@ -1,160 +1,199 @@
-import { LockKeyhole, Scale, ShieldAlert } from 'lucide-react'
-import { Panel } from '../components/panel'
+import { Check, Lock } from 'lucide-react'
+import { Card, Chip, KeyVal, SectionHeader } from '../components/ui'
 import { useYearsQuery } from '../lib/api'
 import { formatCurrency } from '../lib/format'
+import type { TaxYear } from '../types/api'
 
 export function TaxYearsScreen() {
   const { data, isLoading, error } = useYearsQuery()
 
   if (isLoading) {
     return (
-      <Panel eyebrow="Tax years" title="Loading year policies" subtitle="Waiting for live `/api/years` data.">
-        <div className="grid gap-4">
-          <div className="h-48 animate-pulse rounded-[1.7rem] bg-stone-200/80" />
-          <div className="h-48 animate-pulse rounded-[1.7rem] bg-stone-200/80" />
+      <div className="max-w-5xl mx-auto px-8 py-8">
+        <SectionHeader title="Tax Years" subtitle="Loading per-year policy from backend." />
+        <div className="space-y-3">
+          <div className="h-32 animate-pulse rounded-xl bg-borderc/50" />
+          <div className="h-32 animate-pulse rounded-xl bg-borderc/50" />
         </div>
-      </Panel>
+      </div>
     )
   }
 
   if (error || !data) {
     return (
-      <Panel eyebrow="Tax years" title="Backend connection needed" subtitle="The UI could not load `/api/years`." tone="muted">
-        <div className="rounded-[1.4rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          Start the backend and reload this screen.
-        </div>
-      </Panel>
+      <div className="max-w-5xl mx-auto px-8 py-8">
+        <SectionHeader title="Tax Years" subtitle="Backend years endpoint is required." />
+        <Card className="p-5 border-err-bg">
+          <div className="text-sm text-err">
+            Could not load <span className="font-mono">/api/years</span>.
+          </div>
+        </Card>
+      </div>
     )
   }
 
-  const years = [...data.items].sort((left, right) => right.year - left.year)
+  const years = [...data.items].sort((a, b) => b.year - a.year)
 
   return (
-    <div className="grid gap-4">
-      <Panel
-        eyebrow="Server policy"
+    <div className="max-w-5xl mx-auto px-8 py-8">
+      <SectionHeader
         title="Tax Years"
-        subtitle="These cards are read-only for now. They surface server-side policy and explicitly freeze filed years."
-      >
-        {years.length > 0 ? (
-          <div className="grid gap-4">
-            {years.map((year) => (
-              <article
-                key={year.year}
-                className={`rounded-[1.8rem] border p-5 ${
-                  year.year === 2024
-                    ? 'border-stone-300 bg-[linear-gradient(140deg,_rgba(244,244,245,0.98),_rgba(228,228,231,0.94))]'
-                    : 'border-stone-200/80 bg-white/82'
-                }`}
-              >
-                <div className="grid gap-5 xl:grid-cols-[1.2fr_1fr]">
-                  <div className="space-y-4">
-                    <div className="flex flex-wrap items-start justify-between gap-4">
-                      <div>
-                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">Year {year.year}</div>
-                        <h3 className="mt-2 font-display text-3xl text-stone-900">{year.method}</h3>
-                        <p className="mt-2 text-sm leading-6 text-stone-600">
-                          FX method {year.fx_method} with a {Math.round(year.tax_rate * 100)}% tax rate.
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Badge label={year.filed ? 'Filed' : 'Not filed'} tone={year.filed ? 'solid' : 'soft'} />
-                        <Badge label={year.locked ? 'Locked' : 'Editable'} tone={year.locked ? 'solid' : 'soft'} />
-                        <Badge label={year.method} tone="soft" />
-                      </div>
-                    </div>
+        subtitle="Method, FX, 100k exemption, filed status, and locking — per year."
+      />
+      {years.length === 0 ? (
+        <Card className="p-6 text-sm text-ink3">{data.truth.summary ?? 'Tax years are not available.'}</Card>
+      ) : (
+        <div className="space-y-5">
+          {years.map((y) => (
+            <YearPanel key={y.year} y={y} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <Metric label="Gross proceeds" value={formatCurrency(year.gross_proceeds_czk)} />
-                      <Metric label="Taxable base" value={formatCurrency(year.taxable_base_czk)} />
-                      <Metric label="Tax due" value={formatCurrency(year.tax_due_czk)} />
-                      <Metric label="Exempt proceeds" value={formatCurrency(year.exempt_proceeds_czk)} />
-                    </div>
-                  </div>
+function YearPanel({ y }: { y: TaxYear }) {
+  const isLocked = y.locked
+  const reconTone =
+    y.reconciliation_status === 'reconciled'
+      ? 'ok'
+      : y.reconciliation_status === 'needs_attention'
+        ? 'warn'
+        : y.reconciliation_status === 'accepted_with_note'
+          ? 'info'
+          : 'neutral'
+  const reconLabel = y.reconciliation_status.replaceAll('_', ' ')
 
-                  <div className="space-y-4">
-                    <div className="rounded-[1.45rem] bg-stone-50/90 p-4">
-                      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
-                        <ShieldAlert className="h-4 w-4" />
-                        Reconciliation
-                      </div>
-                      <div className="mt-3 space-y-2 text-sm text-stone-700">
-                        <Row label="Status" value={year.reconciliation_status.replaceAll('_', ' ')} />
-                        <Row
-                          label="Filed tax input"
-                          value={year.filed_tax_input_czk === null ? 'None' : formatCurrency(year.filed_tax_input_czk)}
-                        />
-                        <Row label="Match lines" value={String(year.match_line_count)} />
-                      </div>
-                    </div>
+  return (
+    <Card className={`${isLocked ? 'bg-filed-bg/30' : ''} overflow-hidden`}>
+      <div className="flex items-center gap-4 px-5 py-4 border-b border-borderc">
+        <div className="text-[20px] font-semibold tracking-tight text-ink w-20">{y.year}</div>
+        {isLocked ? (
+          <Chip tone="filed">
+            <Lock className="w-3 h-3" />
+            Filed · Locked · {y.filed_method ?? y.method}
+          </Chip>
+        ) : (
+          <Chip tone="neutral">Draft</Chip>
+        )}
+        <div className="flex-1" />
+        <KeyVal label="Tax due" className="text-right">
+          {formatCurrency(y.tax_due_czk)}
+        </KeyVal>
+      </div>
 
-                    {year.year === 2024 ? (
-                      <div className="rounded-[1.45rem] border border-stone-400/50 bg-white/70 p-4">
-                        <div className="flex items-center gap-2 text-sm font-semibold text-stone-900">
-                          <LockKeyhole className="h-4 w-4" />
-                          Filed {'\u00B7'} Locked {'\u00B7'} LIFO
-                        </div>
-                        <p className="mt-2 text-sm leading-6 text-stone-600">Do not optimize. Method comparison is intentionally hidden for this filed year.</p>
-                      </div>
-                    ) : year.show_method_comparison && year.method_comparison ? (
-                      <div className="rounded-[1.45rem] border border-stone-200/80 bg-white/70 p-4">
-                        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
-                          <Scale className="h-4 w-4" />
-                          Method comparison
-                        </div>
-                        <div className="mt-3 grid gap-2 text-sm text-stone-700">
-                          <Row label="FIFO" value={formatCurrency(year.method_comparison.FIFO)} />
-                          <Row label="LIFO" value={formatCurrency(year.method_comparison.LIFO)} />
-                          <Row label="MIN_GAIN" value={formatCurrency(year.method_comparison.MIN_GAIN)} />
-                          <Row label="MAX_GAIN" value={formatCurrency(year.method_comparison.MAX_GAIN)} />
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="rounded-[1.45rem] border border-stone-200/80 bg-white/70 p-4 text-sm text-stone-600">
-                        Method comparison is not available for this year.
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </article>
-            ))}
+      <div className="grid grid-cols-2 gap-6 p-5">
+        {/* LEFT: settings (read-only — backend not wired for mutation) */}
+        <div className="space-y-4">
+          <div>
+            <label className="text-[11px] uppercase tracking-wider text-ink3">Method policy</label>
+            <div className="mt-1 flex items-center gap-2 flex-wrap">
+              {(['FIFO', 'LIFO', 'MIN_GAIN', 'MAX_GAIN'] as const).map((m) => {
+                const active = y.method === m
+                return (
+                  <span
+                    key={m}
+                    aria-disabled
+                    className={`px-2.5 py-1 rounded-md text-xs border ${
+                      active
+                        ? 'bg-accent-bg border-accent-bg text-accent font-medium'
+                        : 'bg-surface border-borderc text-ink2'
+                    } ${isLocked ? 'opacity-50' : ''} cursor-default`}
+                    title="Method policy is read-only. Mutation endpoint not yet wired."
+                  >
+                    {m}
+                  </span>
+                )
+              })}
+              {isLocked ? (
+                <Chip tone="filed" className="ml-2">
+                  Filed under {y.filed_method ?? y.method}
+                </Chip>
+              ) : null}
+            </div>
+            <div className="text-[11px] text-ink3 mt-1">Source: {y.method_source}</div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <KeyVal label="FX method" mono={false}>
+              {y.fx_method === 'FX_DAILY_CNB' ? 'CNB daily' : 'GFŘ yearly'}
+            </KeyVal>
+            <KeyVal label="Tax rate" mono>
+              {(y.tax_rate * 100).toFixed(2)}%
+            </KeyVal>
+          </div>
+
+          <div className="text-sm text-ink2">
+            <span className="inline-flex items-center gap-2">
+              {y.exemption_100k ? (
+                <Chip tone="ok">
+                  <Check className="w-3 h-3" />
+                  100k exemption applied
+                </Chip>
+              ) : (
+                <Chip tone="neutral">100k exemption off</Chip>
+              )}
+            </span>
+          </div>
+          <div className="text-[11px] text-ink3">Settings source: {y.settings_source}</div>
+        </div>
+
+        {/* RIGHT: numbers + reconciliation */}
+        <div className="space-y-3">
+          <div className="grid grid-cols-3 gap-3">
+            <KeyVal label="Gross proceeds">{formatCurrency(y.gross_proceeds_czk)}</KeyVal>
+            <KeyVal label="Exempt">{formatCurrency(y.exempt_proceeds_czk)}</KeyVal>
+            <KeyVal label="Taxable base">{formatCurrency(y.taxable_base_czk)}</KeyVal>
+          </div>
+          <Card className="p-3">
+            <div className="text-[11px] uppercase tracking-wider text-ink3 mb-2">Reconciliation</div>
+            <div className="grid grid-cols-3 gap-3 items-center">
+              <KeyVal label="Workbook tax">{formatCurrency(y.tax_due_czk)}</KeyVal>
+              <KeyVal label="Filed tax">
+                {y.filed_tax_input_czk == null ? '—' : formatCurrency(y.filed_tax_input_czk)}
+              </KeyVal>
+              <div>
+                <Chip tone={reconTone}>
+                  {y.reconciliation_status === 'reconciled' ? <Check className="w-3 h-3" /> : null}
+                  {reconLabel}
+                </Chip>
+              </div>
+            </div>
+            {y.reconciliation_note ? (
+              <div className="mt-2 text-[12px] text-ink2 italic">{y.reconciliation_note}</div>
+            ) : null}
+            <div className="mt-2 text-[11px] text-ink3">Source: {y.reconciliation_source}</div>
+          </Card>
+
+          <KeyVal label="Match lines" className="pt-1">
+            {y.match_line_count}
+          </KeyVal>
+        </div>
+      </div>
+
+      {/* Method comparison strip */}
+      <div className="px-5 py-3 border-t border-borderc bg-bg/60">
+        {isLocked ? (
+          <div className="text-[12px] text-filed italic">
+            Filed year — {y.filed_method ?? y.method} — do not optimise. Method comparison is hidden for locked years.
+          </div>
+        ) : y.show_method_comparison && y.method_comparison ? (
+          <div className="flex items-center gap-4 text-xs text-ink2 flex-wrap">
+            <span className="uppercase tracking-wider text-[11px] text-ink3">Method comparison (informational)</span>
+            {(['FIFO', 'LIFO', 'MIN_GAIN', 'MAX_GAIN'] as const).map((m) => {
+              const t = y.method_comparison![m]
+              return (
+                <span key={m} className={`num ${m === y.method ? 'text-ink font-medium' : ''}`}>
+                  {m} <span className="text-ink3 ml-1">{formatCurrency(t)}</span>
+                </span>
+              )
+            })}
           </div>
         ) : (
-          <div className="rounded-[1.45rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-            {data.truth.summary ?? 'Tax years are temporarily unavailable.'}
-          </div>
+          <div className="text-[12px] text-ink3 italic">Method comparison not available for this year.</div>
         )}
-      </Panel>
-    </div>
-  )
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[1.35rem] border border-stone-200/80 bg-stone-50/80 p-4">
-      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-stone-500">{label}</div>
-      <div className="mt-2 text-lg font-semibold text-stone-900">{value}</div>
-    </div>
-  )
-}
-
-function Badge({ label, tone }: { label: string; tone: 'soft' | 'solid' }) {
-  return (
-    <span
-      className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
-        tone === 'solid' ? 'bg-stone-900 text-stone-50' : 'bg-stone-900/5 text-stone-700'
-      }`}
-    >
-      {label}
-    </span>
-  )
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between gap-4">
-      <span className="text-stone-500">{label}</span>
-      <span className="text-right font-medium text-stone-900">{value}</span>
-    </div>
+      </div>
+    </Card>
   )
 }
