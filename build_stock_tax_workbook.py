@@ -48,6 +48,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
 from stock_tax_app.engine import policy, ui_state
+from stock_tax_app.state import project_store
 
 
 # -----------------------------------------------------------------------
@@ -2002,7 +2003,12 @@ def calculate_workbook_data(
     *,
     fetch_missing_fx: bool = True,
 ) -> CalculationResult:
-    user_state = load_existing_user_state(out_path)
+    legacy_user_state = load_existing_user_state(out_path)
+    project_state = project_store.load_project_state(out_path.parent)
+    user_state = project_store.merge_project_state_with_legacy_fallback(
+        project_state,
+        legacy_user_state,
+    )
 
     raw_rows: List[RawRow] = []
     import_log: List[Dict[str, Any]] = []
