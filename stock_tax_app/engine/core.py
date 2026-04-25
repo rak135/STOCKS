@@ -54,6 +54,8 @@ _PLACEHOLDER_HREF_FALLBACKS = {
     "/settings": "/",
     "/years": "/tax-years",
 }
+POSITION_RECONCILIATION_TOLERANCE_DEFAULT = 1e-4
+POSITION_RECONCILIATION_WARN_TOLERANCE_DEFAULT = 1e-2
 
 
 def _resolve_path(project_dir: Path, value: Path | str | None, default_name: str) -> Path:
@@ -259,6 +261,8 @@ def _method_source(
 ) -> str:
     if policy.is_filed(year):
         return "static_config"
+    if project_state.year_settings.get(year, {}).get("method") is not None:
+        return "project_state"
     if project_state.method_selection.get(year):
         return "project_state"
     if _legacy_has_method_row(legacy_user_state, year):
@@ -404,12 +408,20 @@ def _method_values_for_year(
     return values
 
 
+def _year_default_method(settings_by_year: dict[int, dict[str, Any]], year: int) -> str:
+    settings = settings_by_year.get(year, {})
+    return policy.resolved_method_for(year, settings.get("method"))
+
+
 def _effective_year_method(calc: workbook.CalculationResult, year: int) -> str:
     if policy.is_filed(year):
         return policy.filed_method(year) or "LIFO"
+    explicit_default = calc.settings.get(year, {}).get("method")
+    if explicit_default:
+        return str(explicit_default)
     methods = _method_values_for_year(calc.method_selection, year, calc.instrument_ids)
     if not methods:
-        return policy.default_method_for(year)
+        return _year_default_method(calc.settings, year)
     if len(methods) == 1:
         return next(iter(methods))
     return "MIXED"
@@ -627,7 +639,8 @@ def _build_sales(
                 price_usd=float(tx.price_usd),
                 proceeds_czk=float(sum(line.proceeds_czk for line in lines)),
                 method=calc.method_selection.get(
-                    (tx.trade_date.year, tx.instrument_id), policy.default_method_for(tx.trade_date.year)
+                    (tx.trade_date.year, tx.instrument_id),
+                    _year_default_method(calc.settings, tx.trade_date.year),
                 ),
                 matched_quantity=float(matched_quantity),
                 unmatched_quantity=float(unmatched_quantity),
@@ -695,10 +708,15 @@ def _build_open_positions(
             ),
         )
 
+    ok_tolerance = POSITION_RECONCILIATION_TOLERANCE_DEFAULT
+    warn_tolerance = max(POSITION_RECONCILIATION_WARN_TOLERANCE_DEFAULT, ok_tolerance)
+
     rows = workbook.build_open_position_rows(
         calc.raw_rows,
         calc.instrument_map,
         calc.lots_final,
+        ok_tolerance=ok_tolerance,
+        warn_tolerance=warn_tolerance,
     )
     rows_by_inst = {str(row["Instrument_ID"]): row for row in rows}
     ticker_by_inst: dict[str, str] = {}
@@ -733,6 +751,14 @@ def _build_open_positions(
         ticker = ticker_by_inst.get(inst, inst)
         instrument_source = _instrument_map_source(project_state, legacy_user_state, ticker)
         status = str(row.get("Status") or "UNKNOWN").lower()
+        reported_qty = (
+            float(row["Reported qty"])
+            if row.get("Reported qty") is not None
+            else float(row["Yahoo qty"])
+            if row.get("Yahoo qty") is not None
+            else None
+        )
+        difference = float(row["Difference"]) if row.get("Difference") is not None else None
         reason_code = None
         reason = None
         truth_status = "ready"
@@ -747,22 +773,42 @@ def _build_open_positions(
             else:
                 reason_code = "unknown_missing_yahoo_position"
                 reason = "Yahoo position rows are missing for this instrument."
-        elif status in {"warn", "error"}:
+        elif status == "ok":
+            reason_code = "reconciled_within_tolerance"
+            reason = (
+                "Calculated and reported quantities reconcile within the configured tolerance "
+                f"({ok_tolerance:.6g})."
+            )
+        elif status == "warn":
             truth_status = "needs_review"
-            reason_code = "position_mismatch"
-            reason = "Calculated quantity does not fully reconcile to imported Yahoo position rows."
+            reason_code = "difference_above_tolerance"
+            reason = (
+                "Quantity difference is above tolerance but below material threshold: "
+                f"|difference|={abs(difference or 0.0):.6g}, "
+                f"tolerance={ok_tolerance:.6g}, material_threshold={warn_tolerance:.6g}."
+            )
+        elif status == "error":
+            truth_status = "blocked"
+            reason_code = "material_difference"
+            reason = (
+                "Material quantity mismatch between calculated and reported inventory: "
+                f"|difference|={abs(difference or 0.0):.6g}, "
+                f"material_threshold={warn_tolerance:.6g}."
+            )
+        else:
+            truth_status = "unknown"
+            reason_code = "unknown_status"
+            reason = f"Unrecognized open-position status '{status}'."
 
         positions.append(
             OpenPosition(
                 ticker=ticker,
                 instrument_id=inst,
                 calculated_qty=float(row.get("Calculated qty") or 0.0),
-                yahoo_qty=(
-                    float(row["Yahoo qty"]) if row.get("Yahoo qty") is not None else None
-                ),
-                difference=(
-                    float(row["Difference"]) if row.get("Difference") is not None else None
-                ),
+                reported_qty=reported_qty,
+                yahoo_qty=reported_qty,
+                difference=difference,
+                tolerance=ok_tolerance,
                 status=status,
                 lots=sorted(lots_by_inst.get(inst, []), key=lambda lot: (lot.buy_date, lot.lot_id)),
                 truth_status=truth_status,
@@ -774,18 +820,34 @@ def _build_open_positions(
         )
 
     response_status = (
-        "partial"
+        "blocked"
+        if any(position.truth_status == "blocked" for position in positions)
+        else "partial"
         if any(position.truth_status == "unknown" for position in positions)
         else "needs_review"
         if any(position.truth_status == "needs_review" for position in positions)
         else "ready"
     )
     reasons = []
+    if any(position.truth_status == "blocked" for position in positions):
+        reasons.append(
+            _reason(
+                "material_open_position_differences",
+                "One or more open positions have material calculated-vs-reported quantity differences.",
+            )
+        )
     if any(position.truth_status == "unknown" for position in positions):
         reasons.append(
             _reason(
                 "unknown_positions_present",
                 "Some open positions remain unknown and must not be shown as fully resolved.",
+            )
+        )
+    if any(position.truth_status == "needs_review" for position in positions):
+        reasons.append(
+            _reason(
+                "position_differences_above_tolerance",
+                "Some open-position differences exceed tolerance and require operator review.",
             )
         )
     return OpenPositionList(
@@ -798,9 +860,30 @@ def _build_open_positions(
                 *(position.instrument_map_source for position in positions),
             ),
             items=positions,
-            summary="Open positions expose row-level unknown and mismatch reasons instead of ambiguous status pills.",
+            summary=(
+                "Open positions reconcile calculated residual lots against reported broker/Yahoo positions "
+                "using explicit tolerance-based status and reason codes."
+            ),
         ),
     )
+
+
+def _open_position_discrepancy_checks(open_positions: OpenPositionList) -> list[Check]:
+    checks: list[Check] = []
+    for index, position in enumerate(open_positions.items, start=1):
+        if position.status == "ok":
+            continue
+        level = "error" if position.status == "error" else "warn"
+        reason = position.status_reason or "Open-position reconciliation issue."
+        checks.append(
+            Check(
+                id=f"open-position-{index}",
+                level=level,
+                message=f"Open position {position.ticker} ({position.instrument_id}): {reason}",
+                href=_check_href("remaining_position_mismatch"),
+            )
+        )
+    return checks
 
 
 def _build_fx_years(
@@ -925,7 +1008,7 @@ def _build_settings(project_dir: Path, csv_dir: Path, output_path: Path) -> AppS
         default_fx_method=workbook.DEFAULT_FX_METHOD,
         default_100k=workbook.DEFAULT_APPLY_100K,
         unmatched_qty_tolerance=1e-3,
-        position_reconciliation_tolerance=1e-4,
+        position_reconciliation_tolerance=POSITION_RECONCILIATION_TOLERANCE_DEFAULT,
         backup_on_recalc=False,
         require_confirm_unlock=True,
         keep_n_snapshots=1,
@@ -954,7 +1037,11 @@ def _build_settings(project_dir: Path, csv_dir: Path, output_path: Path) -> AppS
     )
 
 
-def _build_audit_summary(calc: workbook.CalculationResult, tax_years: TaxYearList) -> AuditSummary:
+def _build_audit_summary(
+    calc: workbook.CalculationResult,
+    tax_years: TaxYearList,
+    open_positions: OpenPositionList,
+) -> AuditSummary:
     workbook_backed_domains = _remaining_workbook_backed_domains()
     reasons = [
         _reason(
@@ -977,6 +1064,26 @@ def _build_audit_summary(calc: workbook.CalculationResult, tax_years: TaxYearLis
                 "Audit still depends on workbook-backed domains: " + ", ".join(workbook_backed_domains) + ".",
             )
         )
+    if open_positions.truth.status != "ready":
+        reasons.append(
+            _reason(
+                f"open_positions_{open_positions.truth.status}",
+                "Open-position reconciliation is not fully ready; audit readiness is reduced until discrepancies are resolved.",
+            )
+        )
+        for row in open_positions.items:
+            if row.status == "ok":
+                continue
+            reasons.append(
+                _reason(
+                    f"open_position_{row.status}_{row.instrument_id}",
+                    f"{row.ticker} ({row.instrument_id}): {row.status_reason or 'open-position issue.'}",
+                )
+            )
+
+    truth_status = "partial"
+    if calc.calculation_blocked or open_positions.truth.status == "blocked":
+        truth_status = "blocked"
     return AuditSummary(
         year_rows=tax_years.items,
         trace_counts={
@@ -988,7 +1095,7 @@ def _build_audit_summary(calc: workbook.CalculationResult, tax_years: TaxYearLis
             "open_lots": sum(1 for lot in calc.lots_final if lot.quantity_remaining > 1e-9),
         },
         locked_snapshots=sorted(calc.frozen_snapshots.keys()),
-        truth_status="blocked" if calc.calculation_blocked else "partial",
+        truth_status=truth_status,
         summary_only=True,
         status_reasons=reasons,
         workbook_backed_domains=workbook_backed_domains,
@@ -1000,23 +1107,34 @@ def _build_status(
     csv_dir: Path,
     output_path: Path,
     unresolved_checks: list[Check],
+    open_positions: OpenPositionList,
 ) -> AppStatus:
-    if any(check.level == "error" for check in unresolved_checks):
+    open_position_checks = _open_position_discrepancy_checks(open_positions)
+    effective_checks = [*unresolved_checks, *open_position_checks]
+
+    if any(check.level == "error" for check in effective_checks):
         global_status = "blocked"
-    elif any(check.level == "warn" for check in unresolved_checks):
+    elif any(check.level == "warn" for check in effective_checks):
         global_status = "needs_review"
     else:
         global_status = "ready"
     next_action = None
-    if unresolved_checks:
-        first = unresolved_checks[0]
+    if effective_checks:
+        first = effective_checks[0]
         next_action = NextAction(
             label="Review checks",
             href=_frontend_ready_href(first.href or "/"),
         )
 
     workbook_backed_domains = _remaining_workbook_backed_domains()
-    status_reasons = _reasons_from_checks(unresolved_checks)
+    status_reasons = _reasons_from_checks(effective_checks)
+    if open_position_checks:
+        status_reasons.append(
+            _reason(
+                "open_position_discrepancies",
+                "Open-position reconciliation surfaced unresolved discrepancies in calculated vs reported inventory.",
+            )
+        )
     if workbook_backed_domains:
         status_reasons.append(
             _reason(
@@ -1030,9 +1148,9 @@ def _build_status(
         output_path=str(output_path),
         last_calculated_at=datetime.now(timezone.utc),
         global_status=global_status,
-        truth_status=_global_truth_status(unresolved_checks),
+        truth_status=_global_truth_status(effective_checks),
         next_action=next_action,
-        unresolved_checks=unresolved_checks,
+        unresolved_checks=effective_checks,
         status_reasons=status_reasons,
         workbook_backed_domains=workbook_backed_domains,
     )
@@ -1068,8 +1186,8 @@ def run(
     open_positions = _build_open_positions(calc, project_state, legacy_user_state, unresolved_checks)
     fx_years = _build_fx_years(calc, project_state, legacy_user_state, unresolved_checks)
     settings = _build_settings(project_path, csv_path, output)
-    audit_summary = _build_audit_summary(calc, tax_years)
-    app_status = _build_status(project_path, csv_path, output, unresolved_checks)
+    audit_summary = _build_audit_summary(calc, tax_years, open_positions)
+    app_status = _build_status(project_path, csv_path, output, unresolved_checks, open_positions)
 
     return EngineResult(
         app_status=app_status,

@@ -164,6 +164,7 @@ def _extract_year_settings_from_legacy(legacy_state: dict[str, Any]) -> dict[int
         out[year] = {
             "tax_rate": row.get("Tax rate"),
             "fx_method": row.get("FX method"),
+            "method": row.get("Method"),
             "apply_100k": row.get("Apply 100k exemption?"),
             "notes": row.get("Notes") or "",
         }
@@ -253,6 +254,8 @@ def _merge_settings_rows(
             merged["Tax rate"] = state_row.get("tax_rate")
         if "fx_method" in state_row:
             merged["FX method"] = state_row.get("fx_method")
+        if "method" in state_row:
+            merged["Method"] = state_row.get("method")
         if "apply_100k" in state_row:
             merged["Apply 100k exemption?"] = state_row.get("apply_100k")
         if "notes" in state_row:

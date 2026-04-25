@@ -553,6 +553,7 @@ def build_settings(
         out[y] = {
             "tax_rate": _to_float(src.get("Tax rate"), DEFAULT_TAX_RATE),
             "fx_method": str(src.get("FX method") or DEFAULT_FX_METHOD).upper(),
+            "method": policy.resolved_method_for(y, src.get("Method")),
             "apply_100k": _to_bool(src.get("Apply 100k exemption?"),
                                    DEFAULT_APPLY_100K),
             "locked": _to_bool(src.get("Locked year?"), False),
@@ -681,6 +682,13 @@ def build_method_selection(user_state: Dict[str, Any],
                            instrument_ids: Iterable[str]
                            ) -> Dict[Tuple[int, str], str]:
     sel: Dict[Tuple[int, str], str] = {}
+    year_defaults: Dict[int, str] = {}
+    for row in user_state.get("Settings", []):
+        try:
+            y = int(row.get("Tax year"))
+        except (TypeError, ValueError):
+            continue
+        year_defaults[y] = policy.resolved_method_for(y, row.get("Method"))
     for row in user_state.get("Method_Selection", []):
         try:
             y = int(row.get("Tax year"))
@@ -690,7 +698,7 @@ def build_method_selection(user_state: Dict[str, Any],
         method = policy.resolved_method_for(y, row.get("Method"))
         sel[(y, inst)] = method
     for y in years:
-        year_default = policy.resolved_method_for(y)
+        year_default = year_defaults.get(y, policy.resolved_method_for(y))
         for inst in instrument_ids:
             sel.setdefault((y, inst), year_default)
     return sel
@@ -1840,6 +1848,9 @@ def build_open_position_rows(
     raw_rows: List[RawRow],
     instrument_map: Dict[str, Dict[str, str]],
     lots: List[Lot],
+    *,
+    ok_tolerance: float = 1e-4,
+    warn_tolerance: float = 1e-2,
 ) -> List[Dict[str, Any]]:
     yahoo = extract_position_rows(raw_rows, instrument_map)
     calc: Dict[str, float] = defaultdict(float)
@@ -1856,9 +1867,12 @@ def build_open_position_rows(
             status = "UNKNOWN"
         else:
             diff = cq - yq
-            status = "OK" if abs(diff) <= 1e-4 else ("WARN" if abs(diff) <= 1e-2 else "ERROR")
+            status = "OK" if abs(diff) <= ok_tolerance else (
+                "WARN" if abs(diff) <= warn_tolerance else "ERROR"
+            )
         rows.append({
             "Instrument_ID": inst,
+            "Reported qty": yq,
             "Yahoo qty": yq,
             "Calculated qty": cq,
             "Difference": diff,

@@ -178,6 +178,7 @@ def test_project_state_roundtrip(tmp_path):
         metadata=ProjectStateMetadata(schema_version=SCHEMA_VERSION),
         year_settings={
             2025: {
+                "method": "MIN_GAIN",
                 "tax_rate": 0.2,
                 "fx_method": "FX_UNIFIED_GFR",
                 "apply_100k": True,
@@ -248,6 +249,7 @@ def test_project_state_beats_workbook_fallback_for_wired_domains(tmp_path):
     state = ProjectState(
         year_settings={
             2025: {
+                "method": "MAX_GAIN",
                 "tax_rate": 0.2,
                 "fx_method": "FX_UNIFIED_GFR",
                 "apply_100k": False,
@@ -263,7 +265,56 @@ def test_project_state_beats_workbook_fallback_for_wired_domains(tmp_path):
     year_2025 = next(year for year in result.tax_years.items if year.year == 2025)
 
     assert sale_after.method == "FIFO"
+    assert year_2025.method == "MAX_GAIN"
     assert year_2025.tax_rate == 0.2
+
+
+def test_year_method_default_applies_without_known_instruments(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            year_settings={
+                2030: {
+                    "method": "LIFO",
+                    "tax_rate": 0.15,
+                    "fx_method": "FX_UNIFIED_GFR",
+                    "apply_100k": False,
+                }
+            }
+        ),
+    )
+
+    result = run(project_dir=project, write_workbook=False)
+    year_2030 = next(year for year in result.tax_years.items if year.year == 2030)
+
+    assert year_2030.method == "LIFO"
+    assert year_2030.tax_rate == pytest.approx(0.15)
+
+
+def test_per_instrument_method_override_beats_year_method_default(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline = run(project_dir=project, write_workbook=False)
+    first_sale = baseline.sales.items[0]
+
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            year_settings={
+                first_sale.year: {
+                    "method": "MIN_GAIN",
+                }
+            },
+            method_selection={first_sale.year: {first_sale.instrument_id: "FIFO"}},
+        ),
+    )
+
+    result = run(project_dir=project, write_workbook=False)
+    sale_after = next(sale for sale in result.sales.items if sale.id == first_sale.id)
+    year_row = next(year for year in result.tax_years.items if year.year == first_sale.year)
+
+    assert sale_after.method == "FIFO"
+    assert year_row.method == "MIN_GAIN"
 
 
 def test_legacy_workbook_fallback_works_and_can_be_adopted(tmp_path):

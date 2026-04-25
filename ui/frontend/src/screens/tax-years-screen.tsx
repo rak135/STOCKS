@@ -1,8 +1,12 @@
+import { useEffect, useMemo, useState } from 'react'
 import { Check, Lock } from 'lucide-react'
-import { Card, Chip, KeyVal, SectionHeader } from '../components/ui'
-import { useYearsQuery } from '../lib/api'
+import { Button, Card, Chip, KeyVal, SectionHeader } from '../components/ui'
+import { ApiError, usePatchYearMutation, useYearsQuery } from '../lib/api'
 import { formatCurrency } from '../lib/format'
 import type { TaxYear } from '../types/api'
+
+const METHOD_OPTIONS = ['FIFO', 'LIFO', 'MIN_GAIN', 'MAX_GAIN'] as const
+const FX_METHOD_OPTIONS = ['FX_UNIFIED_GFR', 'FX_DAILY_CNB'] as const
 
 export function TaxYearsScreen() {
   const { data, isLoading, error } = useYearsQuery()
@@ -55,6 +59,67 @@ export function TaxYearsScreen() {
 
 function YearPanel({ y }: { y: TaxYear }) {
   const isLocked = y.locked
+  const patchMutation = usePatchYearMutation()
+  const [method, setMethod] = useState<(typeof METHOD_OPTIONS)[number]>('FIFO')
+  const [fxMethod, setFxMethod] = useState<(typeof FX_METHOD_OPTIONS)[number]>('FX_UNIFIED_GFR')
+  const [taxRatePercent, setTaxRatePercent] = useState('15')
+  const [exemption100k, setExemption100k] = useState(false)
+  const [localError, setLocalError] = useState<string | null>(null)
+  const [savedAt, setSavedAt] = useState<number | null>(null)
+
+  useEffect(() => {
+    const resolvedMethod = METHOD_OPTIONS.includes(y.method as (typeof METHOD_OPTIONS)[number])
+      ? (y.method as (typeof METHOD_OPTIONS)[number])
+      : 'FIFO'
+    const resolvedFxMethod = FX_METHOD_OPTIONS.includes(y.fx_method)
+      ? y.fx_method
+      : 'FX_UNIFIED_GFR'
+    setMethod(resolvedMethod)
+    setFxMethod(resolvedFxMethod)
+    setTaxRatePercent((y.tax_rate * 100).toFixed(2))
+    setExemption100k(y.exemption_100k)
+    setLocalError(null)
+  }, [y.method, y.fx_method, y.tax_rate, y.exemption_100k])
+
+  const normalizedTaxRateInput = taxRatePercent.trim().replace(',', '.')
+  const parsedTaxRatePercent = normalizedTaxRateInput === '' ? Number.NaN : Number(normalizedTaxRateInput)
+  const hasValidTaxRate = Number.isFinite(parsedTaxRatePercent) && parsedTaxRatePercent >= 0
+  const draftTaxRateDecimal = hasValidTaxRate ? parsedTaxRatePercent / 100 : y.tax_rate
+  const isDirty =
+    method !== y.method ||
+    fxMethod !== y.fx_method ||
+    Math.abs(draftTaxRateDecimal - y.tax_rate) > 1e-12 ||
+    exemption100k !== y.exemption_100k
+  const mutationError = patchMutation.error instanceof ApiError ? patchMutation.error.detail : null
+  const canSave = !isLocked && isDirty && hasValidTaxRate && !patchMutation.isPending
+  const saveStateText = useMemo(() => {
+    if (patchMutation.isPending) return 'Saving...'
+    if (savedAt !== null) return 'Saved'
+    return null
+  }, [patchMutation.isPending, savedAt])
+
+  async function handleSave() {
+    if (!hasValidTaxRate) {
+      setLocalError('Tax rate must be a numeric percent >= 0.')
+      return
+    }
+    setLocalError(null)
+    try {
+      await patchMutation.mutateAsync({
+        year: y.year,
+        payload: {
+          method,
+          fx_method: fxMethod,
+          tax_rate: parsedTaxRatePercent / 100,
+          apply_100k_exemption: exemption100k,
+        },
+      })
+      setSavedAt(Date.now())
+    } catch {
+      // The backend error is rendered from mutation state.
+    }
+  }
+
   const reconTone =
     y.reconciliation_status === 'reconciled'
       ? 'ok'
@@ -84,26 +149,27 @@ function YearPanel({ y }: { y: TaxYear }) {
       </div>
 
       <div className="grid grid-cols-2 gap-6 p-5">
-        {/* LEFT: settings (read-only — backend not wired for mutation) */}
+        {/* LEFT: editable settings for unlocked years */}
         <div className="space-y-4">
           <div>
             <label className="text-[11px] uppercase tracking-wider text-ink3">Method policy</label>
             <div className="mt-1 flex items-center gap-2 flex-wrap">
-              {(['FIFO', 'LIFO', 'MIN_GAIN', 'MAX_GAIN'] as const).map((m) => {
-                const active = y.method === m
+              {METHOD_OPTIONS.map((m) => {
                 return (
-                  <span
+                  <button
                     key={m}
-                    aria-disabled
+                    type="button"
+                    disabled={isLocked || patchMutation.isPending}
+                    onClick={() => setMethod(m)}
                     className={`px-2.5 py-1 rounded-md text-xs border ${
-                      active
+                      method === m
                         ? 'bg-accent-bg border-accent-bg text-accent font-medium'
                         : 'bg-surface border-borderc text-ink2'
-                    } ${isLocked ? 'opacity-50' : ''} cursor-default`}
-                    title="Method policy is read-only. Mutation endpoint not yet wired."
+                    } ${isLocked ? 'opacity-50 cursor-not-allowed' : 'hover:bg-bg'} `}
+                    title={isLocked ? 'Filed/locked years cannot be changed.' : 'Select method and save.'}
                   >
                     {m}
-                  </span>
+                  </button>
                 )
               })}
               {isLocked ? (
@@ -115,18 +181,42 @@ function YearPanel({ y }: { y: TaxYear }) {
             <div className="text-[11px] text-ink3 mt-1">Source: {y.method_source}</div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <KeyVal label="FX method" mono={false}>
-              {y.fx_method === 'FX_DAILY_CNB' ? 'CNB daily' : 'GFŘ yearly'}
-            </KeyVal>
-            <KeyVal label="Tax rate" mono>
-              {(y.tax_rate * 100).toFixed(2)}%
-            </KeyVal>
+          <div className="grid grid-cols-2 gap-4 items-end">
+            <div>
+              <label className="text-[11px] uppercase tracking-wider text-ink3">FX method</label>
+              <select
+                className="mt-1 w-full rounded-md border border-borderc bg-surface px-2.5 py-2 text-sm text-ink focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
+                value={fxMethod}
+                disabled={isLocked || patchMutation.isPending}
+                onChange={(e) => setFxMethod(e.target.value as (typeof FX_METHOD_OPTIONS)[number])}
+              >
+                <option value="FX_UNIFIED_GFR">GFR yearly</option>
+                <option value="FX_DAILY_CNB">CNB daily</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-[11px] uppercase tracking-wider text-ink3">Tax rate (%)</label>
+              <input
+                type="text"
+                inputMode="decimal"
+                className="mt-1 w-full rounded-md border border-borderc bg-surface px-2.5 py-2 text-sm text-ink num focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
+                value={taxRatePercent}
+                disabled={isLocked || patchMutation.isPending}
+                onChange={(e) => setTaxRatePercent(e.target.value)}
+              />
+            </div>
           </div>
 
           <div className="text-sm text-ink2">
-            <span className="inline-flex items-center gap-2">
-              {y.exemption_100k ? (
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={exemption100k}
+                disabled={isLocked || patchMutation.isPending}
+                onChange={(e) => setExemption100k(e.target.checked)}
+              />
+              {exemption100k ? (
                 <Chip tone="ok">
                   <Check className="w-3 h-3" />
                   100k exemption applied
@@ -134,9 +224,35 @@ function YearPanel({ y }: { y: TaxYear }) {
               ) : (
                 <Chip tone="neutral">100k exemption off</Chip>
               )}
-            </span>
+            </label>
           </div>
+
+          <div className="flex items-center gap-2">
+            <Button type="button" onClick={handleSave} disabled={!canSave}>
+              Apply year settings
+            </Button>
+            {saveStateText ? <span className="text-xs text-ink3">{saveStateText}</span> : null}
+            {!isLocked && !hasValidTaxRate ? (
+              <span className="text-xs text-err">Tax rate must be numeric and &gt;= 0.</span>
+            ) : null}
+          </div>
+          {localError ? (
+            <div className="text-xs text-err">{localError}</div>
+          ) : null}
+          {mutationError ? (
+            <div className="text-xs text-err">Save failed: {mutationError}</div>
+          ) : null}
+          {patchMutation.error && !mutationError ? (
+            <div className="text-xs text-err">Save failed. Please retry.</div>
+          ) : null}
+          {isLocked ? (
+            <div className="text-xs text-ink3">Filed/locked years are read-only by backend policy.</div>
+          ) : null}
           <div className="text-[11px] text-ink3">Settings source: {y.settings_source}</div>
+          <div className="text-[11px] text-ink3">Method source: {y.method_source}</div>
+          <div className="text-xs text-ink3">
+            Saved values are confirmed from backend response after refetch; this screen does not treat local edits as final truth.
+          </div>
         </div>
 
         {/* RIGHT: numbers + reconciliation */}

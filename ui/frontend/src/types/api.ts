@@ -122,6 +122,13 @@ export type TaxYearsResponse = {
   truth: CollectionTruth
 }
 
+export type YearPatchRequest = {
+  method?: 'FIFO' | 'LIFO' | 'MIN_GAIN' | 'MAX_GAIN'
+  fx_method?: 'FX_DAILY_CNB' | 'FX_UNIFIED_GFR'
+  tax_rate?: number
+  apply_100k_exemption?: boolean
+}
+
 export type ReviewStatus = 'unreviewed' | 'reviewed' | 'flagged'
 
 export type SellClassification = 'taxable' | 'exempt' | 'mixed'
@@ -227,8 +234,10 @@ export type OpenPosition = {
   ticker: string
   instrument_id: string
   calculated_qty: number
+  reported_qty: number | null
   yahoo_qty: number | null
   difference: number | null
+  tolerance: number | null
   status: OpenPositionStatus
   lots: OpenLot[]
   truth_status: TruthStatus

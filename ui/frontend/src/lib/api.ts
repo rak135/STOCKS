@@ -10,6 +10,7 @@ import type {
   SellList,
   SellReviewPatchRequest,
   TaxYearsResponse,
+  YearPatchRequest,
 } from '../types/api'
 
 export class ApiError extends Error {
@@ -81,6 +82,31 @@ export function useYearsQuery() {
   return useQuery({
     queryKey: ['years'],
     queryFn: () => request<TaxYearsResponse>('/api/years'),
+  })
+}
+
+export function usePatchYearMutation() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ year, payload }: { year: number; payload: YearPatchRequest }) =>
+      request<unknown>(`/api/years/${year}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['years'] }),
+        queryClient.invalidateQueries({ queryKey: ['status'] }),
+        queryClient.invalidateQueries({ queryKey: ['audit'] }),
+        queryClient.invalidateQueries({ queryKey: ['sales'] }),
+        queryClient.invalidateQueries({ queryKey: ['fx'] }),
+        queryClient.invalidateQueries({ queryKey: ['open-positions'] }),
+      ])
+    },
   })
 }
 

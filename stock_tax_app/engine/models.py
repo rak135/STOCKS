@@ -275,8 +275,10 @@ class OpenPosition(ApiModel):
     ticker: str
     instrument_id: str
     calculated_qty: float
+    reported_qty: Optional[float] = None
     yahoo_qty: Optional[float] = None
     difference: Optional[float] = None
+    tolerance: Optional[float] = None
     status: OpenPositionStatus
     lots: List[OpenLot] = Field(default_factory=list)
     truth_status: TruthStatus = "ready"

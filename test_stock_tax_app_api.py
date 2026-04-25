@@ -179,6 +179,47 @@ def _set_instrument_map_row(
     wb.save(workbook_path)
 
 
+def _append_position_row(
+    project: Path,
+    *,
+    symbol: str,
+    quantity: float,
+    csv_name: str = "Trading212.csv",
+) -> None:
+    csv_path = project / ".csv" / csv_name
+    raw = csv_path.read_text(encoding="utf-8")
+    lines = raw.splitlines()
+    if not lines:
+        raise AssertionError(f"CSV fixture {csv_name} is empty")
+
+    headers = [value.strip() for value in lines[0].split(",")]
+    values = {header: "" for header in headers}
+    if "Symbol" in values:
+        values["Symbol"] = symbol
+    if "Quantity" in values:
+        values["Quantity"] = f"{quantity:.8f}".rstrip("0").rstrip(".")
+    if "Current Price" in values:
+        values["Current Price"] = "0"
+
+    row = ",".join(str(values.get(header, "")) for header in headers)
+    with csv_path.open("a", encoding="utf-8", newline="\n") as fh:
+        if raw and not raw.endswith("\n"):
+            fh.write("\n")
+        fh.write(row)
+
+
+def _first_unknown_open_position(client: TestClient) -> dict:
+    response = client.get("/api/open-positions")
+    assert response.status_code == 200
+    body = response.json()
+    row = next(
+        item
+        for item in body["items"]
+        if item["status"] == "unknown" and float(item["calculated_qty"]) > 0
+    )
+    return row
+
+
 def test_engine_run_returns_engine_result(tmp_path):
     project = _copy_project_fixture(tmp_path)
     result = run(project_dir=project, write_workbook=False)
@@ -793,6 +834,157 @@ def test_open_positions_unknown_rows_have_explicit_truth_reason(tmp_path):
     assert all(row["status_reason"] for row in unknown_rows)
 
 
+def test_open_positions_exact_match_is_ok_and_ready(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline_client = TestClient(create_app(project_dir=project))
+    baseline_unknown = _first_unknown_open_position(baseline_client)
+
+    _append_position_row(
+        project,
+        symbol=baseline_unknown["ticker"],
+        quantity=float(baseline_unknown["calculated_qty"]),
+    )
+
+    client = TestClient(create_app(project_dir=project))
+    response = client.get("/api/open-positions")
+    assert response.status_code == 200
+    body = response.json()
+
+    row = next(item for item in body["items"] if item["instrument_id"] == baseline_unknown["instrument_id"])
+    assert row["status"] == "ok"
+    assert row["truth_status"] == "ready"
+    assert row["reported_qty"] == pytest.approx(float(baseline_unknown["calculated_qty"]))
+    assert row["difference"] == pytest.approx(0.0)
+    assert row["status_reason_code"] == "reconciled_within_tolerance"
+    assert row["tolerance"] == pytest.approx(1e-4)
+    assert body["truth"]["status"] in {"ready", "partial", "needs_review"}
+
+
+def test_open_positions_warn_difference_creates_needs_review_and_status_check(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline_client = TestClient(create_app(project_dir=project))
+    baseline_unknown = _first_unknown_open_position(baseline_client)
+    calculated_qty = float(baseline_unknown["calculated_qty"])
+    reported_qty = calculated_qty - 0.005
+
+    _append_position_row(
+        project,
+        symbol=baseline_unknown["ticker"],
+        quantity=reported_qty,
+    )
+
+    client = TestClient(create_app(project_dir=project))
+    positions = client.get("/api/open-positions")
+    assert positions.status_code == 200
+    positions_body = positions.json()
+
+    row = next(item for item in positions_body["items"] if item["instrument_id"] == baseline_unknown["instrument_id"])
+    assert row["status"] == "warn"
+    assert row["truth_status"] == "needs_review"
+    assert row["status_reason_code"] == "difference_above_tolerance"
+    assert row["status_reason"]
+
+    status = client.get("/api/status")
+    assert status.status_code == 200
+    status_body = status.json()
+    open_position_checks = [check for check in status_body["unresolved_checks"] if check["id"].startswith("open-position-")]
+    assert open_position_checks
+    assert any(check["level"] == "warn" for check in open_position_checks)
+    assert any(baseline_unknown["instrument_id"] in check["message"] for check in open_position_checks)
+
+
+def test_open_positions_material_difference_blocks_collection_and_surfaces_audit_reason(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline_client = TestClient(create_app(project_dir=project))
+    baseline_unknown = _first_unknown_open_position(baseline_client)
+    calculated_qty = float(baseline_unknown["calculated_qty"])
+    reported_qty = calculated_qty - 0.5
+
+    _append_position_row(
+        project,
+        symbol=baseline_unknown["ticker"],
+        quantity=reported_qty,
+    )
+
+    client = TestClient(create_app(project_dir=project))
+    positions = client.get("/api/open-positions")
+    assert positions.status_code == 200
+    positions_body = positions.json()
+    row = next(item for item in positions_body["items"] if item["instrument_id"] == baseline_unknown["instrument_id"])
+
+    assert row["status"] == "error"
+    assert row["truth_status"] == "blocked"
+    assert row["status_reason_code"] == "material_difference"
+    assert positions_body["truth"]["status"] == "blocked"
+
+    status = client.get("/api/status")
+    assert status.status_code == 200
+    status_body = status.json()
+    assert status_body["global_status"] == "blocked"
+    assert any(
+        check["id"].startswith("open-position-") and check["level"] == "error"
+        for check in status_body["unresolved_checks"]
+    )
+
+    audit = client.get("/api/audit")
+    assert audit.status_code == 200
+    audit_body = audit.json()
+    assert any(reason["code"] == "open_positions_blocked" for reason in audit_body["status_reasons"])
+    assert any(reason["code"].startswith("open_position_error_") for reason in audit_body["status_reasons"])
+
+
+def test_open_positions_missing_reported_position_is_unknown_not_ok(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    client = TestClient(create_app(project_dir=project))
+
+    response = client.get("/api/open-positions")
+    assert response.status_code == 200
+    body = response.json()
+
+    unknown_rows = [row for row in body["items"] if row["status"] == "unknown"]
+    assert unknown_rows
+    assert all(row["truth_status"] == "unknown" for row in unknown_rows)
+    assert all(row["status"] != "ok" for row in unknown_rows)
+    assert all(row["reported_qty"] is None for row in unknown_rows)
+    assert all(row["status_reason_code"] in {"unknown_missing_mapping", "unknown_missing_yahoo_position"} for row in unknown_rows)
+
+
+def test_open_positions_tolerance_behavior_ok_vs_warn(tmp_path):
+    ok_root = tmp_path / "ok_case"
+    ok_root.mkdir(parents=True, exist_ok=True)
+    project_ok = _copy_project_fixture(ok_root)
+    ok_baseline_client = TestClient(create_app(project_dir=project_ok))
+    ok_unknown = _first_unknown_open_position(ok_baseline_client)
+    ok_calculated_qty = float(ok_unknown["calculated_qty"])
+    _append_position_row(project_ok, symbol=ok_unknown["ticker"], quantity=ok_calculated_qty - 0.00005)
+
+    ok_client = TestClient(create_app(project_dir=project_ok))
+    ok_response = ok_client.get("/api/open-positions")
+    assert ok_response.status_code == 200
+    ok_body = ok_response.json()
+
+    ok_row = next(item for item in ok_body["items"] if item["instrument_id"] == ok_unknown["instrument_id"])
+    assert ok_row["status"] == "ok"
+    assert abs(float(ok_row["difference"])) <= float(ok_row["tolerance"])
+
+    warn_root = tmp_path / "warn_case"
+    warn_root.mkdir(parents=True, exist_ok=True)
+    project_warn = _copy_project_fixture(warn_root)
+    warn_baseline_client = TestClient(create_app(project_dir=project_warn))
+    warn_unknown = _first_unknown_open_position(warn_baseline_client)
+    warn_calculated_qty = float(warn_unknown["calculated_qty"])
+    _append_position_row(project_warn, symbol=warn_unknown["ticker"], quantity=warn_calculated_qty - 0.005)
+
+    warn_client = TestClient(create_app(project_dir=project_warn))
+    warn_response = warn_client.get("/api/open-positions")
+    assert warn_response.status_code == 200
+    warn_body = warn_response.json()
+    warn_row = next(item for item in warn_body["items"] if item["instrument_id"] == warn_unknown["instrument_id"])
+
+    assert warn_row["status"] == "warn"
+    assert abs(float(warn_row["difference"])) > float(warn_row["tolerance"])
+
+
 def test_settings_truth_discloses_display_only_and_domain_ownership(tmp_path):
     project = _copy_project_fixture(tmp_path)
     client = TestClient(create_app(project_dir=project))
@@ -919,6 +1111,188 @@ def test_api_rejects_2024_method_change(tmp_path):
     response = client.patch("/api/years/2024", json={"method": "FIFO"})
     assert response.status_code == 409
     assert "2024 is locked" in response.json()["detail"]
+
+
+def test_api_patch_year_updates_method_for_unlocked_year(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    client = TestClient(create_app(project_dir=project))
+
+    response = client.patch("/api/years/2025", json={"method": "MAX_GAIN"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["year"] == 2025
+    assert body["method"] == "MAX_GAIN"
+    assert body["method_source"] == "project_state"
+
+    state = project_store.load_project_state(project)
+    assert state.year_settings[2025]["method"] == "MAX_GAIN"
+    assert state.method_selection.get(2025, {}) == {}
+
+
+def test_api_patch_year_method_migrates_legacy_uniform_instrument_rows(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline = run(project_dir=project, write_workbook=False)
+    instrument_ids = {
+        sale.instrument_id for sale in baseline.sales.items if sale.instrument_id
+    }
+    instrument_ids.update(
+        position.instrument_id for position in baseline.open_positions.items if position.instrument_id
+    )
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            method_selection={2025: {instrument_id: "MAX_GAIN" for instrument_id in instrument_ids}}
+        ),
+    )
+
+    client = TestClient(create_app(project_dir=project))
+    response = client.patch("/api/years/2025", json={"method": "LIFO"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["method"] == "LIFO"
+
+    state = project_store.load_project_state(project)
+    assert state.year_settings[2025]["method"] == "LIFO"
+    assert state.method_selection.get(2025, {}) == {}
+
+
+def test_api_patch_year_method_supports_year_without_known_instruments(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            year_settings={
+                2030: {
+                    "tax_rate": 0.15,
+                    "fx_method": "FX_UNIFIED_GFR",
+                    "apply_100k": False,
+                }
+            }
+        ),
+    )
+
+    client = TestClient(create_app(project_dir=project))
+    response = client.patch("/api/years/2030", json={"method": "MAX_GAIN"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["year"] == 2030
+    assert body["method"] == "MAX_GAIN"
+    assert body["method_source"] == "project_state"
+
+    years = client.get("/api/years")
+    assert years.status_code == 200
+    year_2030 = next(year for year in years.json()["items"] if year["year"] == 2030)
+    assert year_2030["method"] == "MAX_GAIN"
+    assert year_2030["method_source"] == "project_state"
+
+    state = project_store.load_project_state(project)
+    assert state.year_settings[2030]["method"] == "MAX_GAIN"
+    assert state.method_selection.get(2030, {}) == {}
+
+
+def test_api_patch_year_updates_tax_rate_for_unlocked_year(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    client = TestClient(create_app(project_dir=project))
+
+    response = client.patch("/api/years/2025", json={"tax_rate": 0.17})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["year"] == 2025
+    assert body["tax_rate"] == pytest.approx(0.17)
+    assert body["settings_source"] == "project_state"
+
+    state = project_store.load_project_state(project)
+    assert state.year_settings[2025]["tax_rate"] == pytest.approx(0.17)
+
+
+def test_api_patch_year_updates_fx_method_for_unlocked_year(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    client = TestClient(create_app(project_dir=project))
+
+    response = client.patch("/api/years/2025", json={"fx_method": "FX_DAILY_CNB"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["year"] == 2025
+    assert body["fx_method"] == "FX_DAILY_CNB"
+    assert body["settings_source"] == "project_state"
+
+    state = project_store.load_project_state(project)
+    assert state.year_settings[2025]["fx_method"] == "FX_DAILY_CNB"
+
+
+def test_api_patch_year_rejects_invalid_method(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    client = TestClient(create_app(project_dir=project))
+
+    response = client.patch("/api/years/2025", json={"method": "NOT_A_METHOD"})
+    assert response.status_code == 422
+    assert "Unsupported method" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("tax_rate", ["0.2", -0.01, True, None])
+def test_api_patch_year_rejects_invalid_tax_rate(tmp_path, tax_rate):
+    project = _copy_project_fixture(tmp_path)
+    client = TestClient(create_app(project_dir=project))
+
+    response = client.patch("/api/years/2025", json={"tax_rate": tax_rate})
+    if tax_rate is None:
+        assert response.status_code == 400
+        assert "No editable year fields" in response.json()["detail"]
+    else:
+        assert response.status_code == 422
+        assert "tax_rate" in response.json()["detail"]
+
+
+def test_year_settings_patch_survives_recalc_and_runtime_reload(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    client = TestClient(create_app(project_dir=project))
+
+    response = client.patch(
+        "/api/years/2025",
+        json={
+            "method": "MIN_GAIN",
+            "fx_method": "FX_UNIFIED_GFR",
+            "tax_rate": 0.19,
+            "apply_100k_exemption": True,
+        },
+    )
+    assert response.status_code == 200
+
+    recalculated = client.app.state.runtime.calculate(write_workbook=False)
+    year_after_recalc = next(year for year in recalculated.tax_years.items if year.year == 2025)
+    assert year_after_recalc.method == "MIN_GAIN"
+    assert year_after_recalc.fx_method == "FX_UNIFIED_GFR"
+    assert year_after_recalc.tax_rate == pytest.approx(0.19)
+    assert year_after_recalc.exemption_100k is True
+
+    reloaded_client = TestClient(create_app(project_dir=project))
+    reloaded_years = reloaded_client.get("/api/years")
+    assert reloaded_years.status_code == 200
+    year_after_reload = next(year for year in reloaded_years.json()["items"] if year["year"] == 2025)
+    assert year_after_reload["method"] == "MIN_GAIN"
+    assert year_after_reload["fx_method"] == "FX_UNIFIED_GFR"
+    assert year_after_reload["tax_rate"] == pytest.approx(0.19)
+    assert year_after_reload["exemption_100k"] is True
+
+
+def test_get_years_reflects_project_state_values_and_provenance_after_patch(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    client = TestClient(create_app(project_dir=project))
+
+    response = client.patch(
+        "/api/years/2025",
+        json={"method": "LIFO", "tax_rate": 0.23, "fx_method": "FX_UNIFIED_GFR"},
+    )
+    assert response.status_code == 200
+
+    years = client.get("/api/years")
+    assert years.status_code == 200
+    year_2025 = next(year for year in years.json()["items"] if year["year"] == 2025)
+    assert year_2025["method"] == "LIFO"
+    assert year_2025["tax_rate"] == pytest.approx(0.23)
+    assert year_2025["fx_method"] == "FX_UNIFIED_GFR"
+    assert year_2025["settings_source"] == "project_state"
+    assert year_2025["method_source"] == "project_state"
 
 
 def test_locked_output_fails_without_alternate_workbook(tmp_path, monkeypatch):
