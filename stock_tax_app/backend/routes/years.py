@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Request
 
 from stock_tax_app.engine import policy
-from stock_tax_app.engine.models import TaxYear
+from stock_tax_app.engine.models import TaxYear, TaxYearList
 
 router = APIRouter()
 
@@ -13,8 +13,8 @@ class YearPatchRequest(BaseModel):
     method: str | None = None
 
 
-@router.get("/api/years", response_model=list[TaxYear])
-def get_years(request: Request) -> list[TaxYear]:
+@router.get("/api/years", response_model=TaxYearList)
+def get_years(request: Request) -> TaxYearList:
     return request.app.state.runtime.current().tax_years
 
 

@@ -43,7 +43,7 @@ export function OverviewScreen() {
   }
 
   const status = statusQuery.data
-  const years = [...yearsQuery.data].sort((left, right) => right.year - left.year)
+  const years = [...yearsQuery.data.items].sort((left, right) => right.year - left.year)
   const importSummary = importQuery.data
   const nextHref = resolveHref(status.next_action?.href)
 
@@ -113,51 +113,57 @@ export function OverviewScreen() {
           title="Year cards"
           subtitle="Recent years first, with 2024 visually frozen to avoid optimization temptations."
         >
-          <div className="grid gap-4 lg:grid-cols-2">
-            {years.map((year) => (
-              <article
-                key={year.year}
-                className={`rounded-[1.55rem] border p-5 ${
-                  year.year === 2024
-                    ? 'border-stone-300 bg-[linear-gradient(135deg,_rgba(245,245,244,0.98),_rgba(231,229,228,0.94))]'
-                    : 'border-stone-200/80 bg-stone-50/80'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">Tax year</div>
-                    <div className="mt-2 font-display text-3xl text-stone-900">{year.year}</div>
-                  </div>
-                  <div className="rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-stone-600">{year.method}</div>
-                </div>
-                <div className="mt-5 grid gap-2 text-sm text-stone-700">
-                  <Row label="Tax due" value={formatCurrency(year.tax_due_czk)} />
-                  <Row label="Taxable base" value={formatCurrency(year.taxable_base_czk)} />
-                  <Row label="Sales matched" value={formatNumber(year.match_line_count)} />
-                </div>
-                {year.year === 2024 ? (
-                  <div className="mt-5 rounded-[1.35rem] border border-stone-400/50 bg-white/65 px-4 py-3">
-                    <div className="text-sm font-semibold text-stone-900">
-                      Filed {'\u00B7'} Locked {'\u00B7'} LIFO
+          {years.length > 0 ? (
+            <div className="grid gap-4 lg:grid-cols-2">
+              {years.map((year) => (
+                <article
+                  key={year.year}
+                  className={`rounded-[1.55rem] border p-5 ${
+                    year.year === 2024
+                      ? 'border-stone-300 bg-[linear-gradient(135deg,_rgba(245,245,244,0.98),_rgba(231,229,228,0.94))]'
+                      : 'border-stone-200/80 bg-stone-50/80'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">Tax year</div>
+                      <div className="mt-2 font-display text-3xl text-stone-900">{year.year}</div>
                     </div>
-                    <p className="mt-1 text-sm text-stone-600">Do not optimize.</p>
+                    <div className="rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-stone-600">{year.method}</div>
                   </div>
-                ) : (
-                  <div className="mt-5 flex flex-wrap gap-2">
-                    <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-stone-700">
-                      {year.filed ? 'Filed' : 'Not filed'}
-                    </span>
-                    <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-stone-700">
-                      {year.locked ? 'Locked' : 'Editable'}
-                    </span>
-                    <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-stone-700">
-                      {year.show_method_comparison ? 'Comparison available' : 'Comparison hidden'}
-                    </span>
+                  <div className="mt-5 grid gap-2 text-sm text-stone-700">
+                    <Row label="Tax due" value={formatCurrency(year.tax_due_czk)} />
+                    <Row label="Taxable base" value={formatCurrency(year.taxable_base_czk)} />
+                    <Row label="Sales matched" value={formatNumber(year.match_line_count)} />
                   </div>
-                )}
-              </article>
-            ))}
-          </div>
+                  {year.year === 2024 ? (
+                    <div className="mt-5 rounded-[1.35rem] border border-stone-400/50 bg-white/65 px-4 py-3">
+                      <div className="text-sm font-semibold text-stone-900">
+                        Filed {'\u00B7'} Locked {'\u00B7'} LIFO
+                      </div>
+                      <p className="mt-1 text-sm text-stone-600">Do not optimize.</p>
+                    </div>
+                  ) : (
+                    <div className="mt-5 flex flex-wrap gap-2">
+                      <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-stone-700">
+                        {year.filed ? 'Filed' : 'Not filed'}
+                      </span>
+                      <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-stone-700">
+                        {year.locked ? 'Locked' : 'Editable'}
+                      </span>
+                      <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-stone-700">
+                        {year.show_method_comparison ? 'Comparison available' : 'Comparison hidden'}
+                      </span>
+                    </div>
+                  )}
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-[1.45rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              {yearsQuery.data.truth.summary ?? 'Tax years are temporarily unavailable.'}
+            </div>
+          )}
         </Panel>
 
         <Panel

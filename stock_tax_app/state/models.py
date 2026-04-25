@@ -14,6 +14,14 @@ class ProjectStateFxEntry(TypedDict, total=False):
     manual: bool
 
 
+class ProjectStateInstrumentMapEntry(TypedDict, total=False):
+    yahoo_symbol: str
+    instrument_id: str
+    isin: str
+    instrument_name: str
+    notes: str
+
+
 @dataclass(eq=True)
 class ProjectStateMetadata:
     schema_version: int = SCHEMA_VERSION
@@ -26,7 +34,7 @@ class ProjectState:
     method_selection: dict[int, dict[str, str]] = field(default_factory=dict)
     fx_yearly: dict[int, ProjectStateFxEntry] = field(default_factory=dict)
     fx_daily: dict[str, ProjectStateFxEntry] = field(default_factory=dict)
-    instrument_map: dict[str, dict[str, Any]] = field(default_factory=dict)
+    instrument_map: dict[str, ProjectStateInstrumentMapEntry] = field(default_factory=dict)
     corporate_actions: list[dict[str, Any]] = field(default_factory=list)
     locked_years: dict[int, bool] = field(default_factory=dict)
     frozen_inventory: dict[int, list[dict[str, Any]]] = field(default_factory=dict)

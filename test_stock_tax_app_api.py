@@ -22,6 +22,10 @@ from stock_tax_app.state.models import ProjectState
 ROOT = Path(__file__).resolve().parent
 
 
+def _items(payload: dict) -> list[dict]:
+    return payload["items"]
+
+
 def _copy_project_fixture(tmp_path: Path) -> Path:
     project = tmp_path / "project"
     project.mkdir()
@@ -146,18 +150,47 @@ def _set_fx_daily_row(project: Path, target_date: str, rate: float, source_note:
     wb.save(workbook_path)
 
 
+def _set_instrument_map_row(
+    project: Path,
+    symbol: str,
+    *,
+    instrument_id: str,
+    isin: str = "",
+    instrument_name: str = "",
+    notes: str = "",
+) -> None:
+    workbook_path = project / "stock_tax_system.xlsx"
+    wb = load_workbook(workbook_path)
+    ws = wb["Instrument_Map"]
+    for row in range(2, ws.max_row + 1):
+        if ws.cell(row=row, column=1).value == symbol:
+            ws.cell(row=row, column=2, value=instrument_id)
+            ws.cell(row=row, column=3, value=isin)
+            ws.cell(row=row, column=4, value=instrument_name)
+            ws.cell(row=row, column=5, value=notes)
+            wb.save(workbook_path)
+            return
+    row = ws.max_row + 1
+    ws.cell(row=row, column=1, value=symbol)
+    ws.cell(row=row, column=2, value=instrument_id)
+    ws.cell(row=row, column=3, value=isin)
+    ws.cell(row=row, column=4, value=instrument_name)
+    ws.cell(row=row, column=5, value=notes)
+    wb.save(workbook_path)
+
+
 def test_engine_run_returns_engine_result(tmp_path):
     project = _copy_project_fixture(tmp_path)
     result = run(project_dir=project, write_workbook=False)
 
     assert result.__class__.__name__ == "EngineResult"
-    assert result.tax_years
-    assert result.sales
-    year_2024 = next(year for year in result.tax_years if year.year == 2024)
+    assert result.tax_years.items
+    assert result.sales.items
+    year_2024 = next(year for year in result.tax_years.items if year.year == 2024)
     assert year_2024.method == "LIFO"
     assert year_2024.filed is True
     assert year_2024.locked is True
-    year_2025 = next(year for year in result.tax_years if year.year == 2025)
+    year_2025 = next(year for year in result.tax_years.items if year.year == 2025)
     assert year_2025.method == "FIFO"
     assert year_2025.filed is False
     assert year_2025.locked is False
@@ -179,7 +212,7 @@ def test_api_status_import_years_and_sales(tmp_path):
 
     years = client.get("/api/years")
     assert years.status_code == 200
-    year_2024 = next(year for year in years.json() if year["year"] == 2024)
+    year_2024 = next(year for year in _items(years.json()) if year["year"] == 2024)
     assert year_2024["method"] == "LIFO"
     assert year_2024["filed"] is True
     assert year_2024["locked"] is True
@@ -187,7 +220,7 @@ def test_api_status_import_years_and_sales(tmp_path):
 
     sales = client.get("/api/sales")
     assert sales.status_code == 200
-    assert len(sales.json()) > 0
+    assert len(_items(sales.json())) > 0
 
 
 def test_policy_module_is_canonical_year_source_of_truth():
@@ -281,7 +314,7 @@ def test_patch_sale_review_updates_ui_state_only(tmp_path):
     project = _copy_project_fixture(tmp_path)
     client = TestClient(create_app(project_dir=project))
 
-    sales_before = client.get("/api/sales").json()
+    sales_before = _items(client.get("/api/sales").json())
     sell_id = sales_before[0]["id"]
     detail_before = client.get(f"/api/sales/{sell_id}").json()
     years_before = client.get("/api/years").json()
@@ -312,7 +345,7 @@ def test_sale_review_patch_survives_recalc_and_runtime_reload(tmp_path):
     project = _copy_project_fixture(tmp_path)
     client = TestClient(create_app(project_dir=project))
 
-    sell_id = client.get("/api/sales").json()[0]["id"]
+    sell_id = _items(client.get("/api/sales").json())[0]["id"]
     patched = client.patch(
         f"/api/sales/{sell_id}/review",
         json={"review_status": "flagged", "note": "Needs follow-up"},
@@ -320,7 +353,7 @@ def test_sale_review_patch_survives_recalc_and_runtime_reload(tmp_path):
     assert patched.status_code == 200
 
     recalculated = client.app.state.runtime.calculate(write_workbook=False)
-    sale_after_recalc = next(sale for sale in recalculated.sales if sale.id == sell_id)
+    sale_after_recalc = next(sale for sale in recalculated.sales.items if sale.id == sell_id)
     assert sale_after_recalc.review_status == "flagged"
     assert sale_after_recalc.note == "Needs follow-up"
 
@@ -338,7 +371,7 @@ def test_ui_state_beats_conflicting_workbook_review_state(tmp_path):
     project = _copy_project_fixture(tmp_path)
     client = TestClient(create_app(project_dir=project))
 
-    sell_id = client.get("/api/sales").json()[0]["id"]
+    sell_id = _items(client.get("/api/sales").json())[0]["id"]
     raw_sell_id = _write_workbook_review_state(
         project,
         sell_id,
@@ -368,11 +401,48 @@ def test_ui_state_beats_conflicting_workbook_review_state(tmp_path):
     assert raw_sell_id not in ui_payload["sells"]
 
 
+def test_api_outputs_reflect_project_state_instrument_map(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    symbol = "SHOP"
+    _set_instrument_map_row(
+        project,
+        symbol,
+        instrument_id="SHOP_WORKBOOK",
+        isin="WB000SHOP",
+        instrument_name="Workbook SHOP",
+        notes="workbook map",
+    )
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            instrument_map={
+                symbol: {
+                    "yahoo_symbol": symbol,
+                    "instrument_id": "SHOP_STATE",
+                    "isin": "STATE000SHOP",
+                    "instrument_name": "State SHOP",
+                    "notes": "state map",
+                }
+            }
+        ),
+    )
+
+    client = TestClient(create_app(project_dir=project))
+
+    sales = client.get("/api/sales")
+    assert sales.status_code == 200
+    shop_sale = next(row for row in _items(sales.json()) if row["ticker"] == symbol)
+    assert shop_sale["instrument_id"] == "SHOP_STATE"
+
+    positions = client.get("/api/open-positions")
+    assert positions.status_code == 200
+
+
 def test_workbook_export_reflects_backend_ui_state(tmp_path):
     project = _copy_project_fixture(tmp_path)
     client = TestClient(create_app(project_dir=project))
 
-    sell_id = client.get("/api/sales").json()[0]["id"]
+    sell_id = _items(client.get("/api/sales").json())[0]["id"]
     patched = client.patch(
         f"/api/sales/{sell_id}/review",
         json={"review_status": "reviewed", "note": "Export me"},
@@ -380,7 +450,7 @@ def test_workbook_export_reflects_backend_ui_state(tmp_path):
     assert patched.status_code == 200
 
     result = client.app.state.runtime.calculate(write_workbook=True)
-    sale_after_write = next(sale for sale in result.sales if sale.id == sell_id)
+    sale_after_write = next(sale for sale in result.sales.items if sale.id == sell_id)
     assert sale_after_write.review_status == "reviewed"
     assert sale_after_write.note == "Export me"
 
@@ -470,16 +540,45 @@ def test_api_status_exposes_missing_fx_and_blocks_calculation(tmp_path, monkeypa
 
     sales = client.get("/api/sales")
     assert sales.status_code == 200
-    assert sales.json() == []
+    assert sales.json()["items"] == []
+    assert sales.json()["truth"]["empty_meaning"] == "blocked"
 
     years = client.get("/api/years")
     assert years.status_code == 200
-    assert years.json() == []
+    assert years.json()["items"] == []
+    assert years.json()["truth"]["empty_meaning"] == "blocked"
 
     fx = client.get("/api/fx")
     assert fx.status_code == 200
-    fx_2020 = next(row for row in fx.json() if row["year"] == 2020)
+    fx_2020 = next(row for row in fx.json()["items"] if row["year"] == 2020)
     assert fx_2020["missing_dates"]
+
+
+def test_blocked_collections_expose_truth_metadata_not_ambiguous_empty_success(tmp_path, monkeypatch):
+    project = _copy_project_fixture(tmp_path)
+    _set_year_fx_method(project, 2020, "FX_DAILY_CNB")
+    _clear_fx_daily_rows(project)
+    monkeypatch.setattr(
+        workbook_module,
+        "download_cnb_daily_rates_year",
+        lambda year, timeout=15: {},
+    )
+
+    client = TestClient(create_app(project_dir=project))
+
+    status_body = client.get("/api/status").json()
+    assert status_body["global_status"] == "blocked"
+    assert any(reason["message"] for reason in status_body["status_reasons"])
+
+    sales_body = client.get("/api/sales").json()
+    years_body = client.get("/api/years").json()
+    positions_body = client.get("/api/open-positions").json()
+
+    for payload in (sales_body, years_body, positions_body):
+        assert payload["items"] == []
+        assert payload["truth"]["status"] == "blocked"
+        assert payload["truth"]["empty_meaning"] == "blocked"
+        assert payload["truth"]["reasons"]
 
 
 def test_project_state_fx_can_unblock_strict_daily_fx(tmp_path, monkeypatch):
@@ -526,12 +625,85 @@ def test_project_state_fx_can_unblock_strict_daily_fx(tmp_path, monkeypatch):
 
     sales = client.get("/api/sales")
     assert sales.status_code == 200
-    assert sales.json()
+    assert sales.json()["items"]
 
     fx = client.get("/api/fx")
-    fx_2020 = next(row for row in fx.json() if row["year"] == 2020)
+    fx_2020 = next(row for row in fx.json()["items"] if row["year"] == 2020)
     assert fx_2020["missing_dates"] == []
     assert fx_2020["daily_cached"] >= len(required_dates)
+
+
+def test_api_provenance_exposes_project_state_owned_domains(tmp_path, monkeypatch):
+    project = _copy_project_fixture(tmp_path)
+    baseline = run(project_dir=project, write_workbook=False)
+    first_sale = baseline.sales.items[0]
+    _set_year_fx_method(project, 2020, "FX_DAILY_CNB")
+    _clear_fx_daily_rows(project)
+    monkeypatch.setattr(
+        workbook_module,
+        "download_cnb_daily_rates_year",
+        lambda year, timeout=15: {},
+    )
+
+    calc = workbook_module.calculate_workbook_data(
+        inputs=sorted((project / ".csv").glob("*.csv")),
+        out_path=project / "stock_tax_system.xlsx",
+        fetch_missing_fx=False,
+    )
+    required_dates = sorted(
+        {tx.trade_date.isoformat() for tx in calc.txs if tx.trade_date.year == 2020}
+    )
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            year_settings={
+                2025: {
+                    "tax_rate": 0.2,
+                    "fx_method": "FX_UNIFIED_GFR",
+                    "apply_100k": False,
+                    "notes": "state-owned",
+                }
+            },
+            method_selection={first_sale.year: {"STATE_PROVENANCE": "MAX_GAIN"}},
+            fx_daily={
+                day: {
+                    "currency_pair": "USD/CZK",
+                    "rate": 23.55,
+                    "source_note": "state strict unblock",
+                    "manual": True,
+                }
+                for day in required_dates
+            },
+            instrument_map={
+                first_sale.ticker: {
+                    "yahoo_symbol": first_sale.ticker,
+                    "instrument_id": "STATE_PROVENANCE",
+                    "isin": "STATE123",
+                    "instrument_name": "State Provenance Instrument",
+                    "notes": "state-owned",
+                }
+            },
+        ),
+    )
+
+    client = TestClient(create_app(project_dir=project))
+
+    years_body = client.get("/api/years").json()
+    year_2025 = next(year for year in years_body["items"] if year["year"] == 2025)
+    year_first = next(year for year in years_body["items"] if year["year"] == first_sale.year)
+    assert year_2025["tax_rate"] == 0.2
+    assert year_2025["settings_source"] == "project_state"
+    assert year_first["method_source"] == "project_state"
+
+    sales_body = client.get("/api/sales").json()
+    first_sale_row = next(row for row in sales_body["items"] if row["ticker"] == first_sale.ticker)
+    assert first_sale_row["instrument_id"] == "STATE_PROVENANCE"
+    assert first_sale_row["instrument_map_source"] == "project_state"
+
+    fx_body = client.get("/api/fx").json()
+    fx_2020 = next(row for row in fx_body["items"] if row["year"] == 2020)
+    assert fx_2020["rate_source"] == "project_state"
+    assert fx_2020["missing_dates"] == []
 
 
 def test_missing_fx_still_blocks_after_project_state_merge_path(tmp_path, monkeypatch):
@@ -553,14 +725,63 @@ def test_missing_fx_still_blocks_after_project_state_merge_path(tmp_path, monkey
 
     years = client.get("/api/years")
     assert years.status_code == 200
-    assert years.json() == []
+    assert years.json()["items"] == []
+    assert years.json()["truth"]["empty_meaning"] == "blocked"
 
     fx = client.get("/api/fx")
     assert fx.status_code == 200
-    fx_2020 = next(row for row in fx.json() if row["year"] == 2020)
+    fx_2020 = next(row for row in fx.json()["items"] if row["year"] == 2020)
     assert fx_2020["unified_rate"] == 23.14
     assert fx_2020["missing_dates"]
     assert fx_2020["daily_cached"] == 0
+
+
+def test_open_positions_unknown_rows_have_explicit_truth_reason(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    client = TestClient(create_app(project_dir=project))
+
+    response = client.get("/api/open-positions")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["truth"]["status"] == "partial"
+
+    unknown_rows = [row for row in body["items"] if row["status"] == "unknown"]
+    assert unknown_rows
+    assert all(row["truth_status"] == "unknown" for row in unknown_rows)
+    assert all(row["status_reason_code"] for row in unknown_rows)
+    assert all(row["status_reason"] for row in unknown_rows)
+
+
+def test_settings_truth_discloses_display_only_and_domain_ownership(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    client = TestClient(create_app(project_dir=project))
+
+    response = client.get("/api/settings")
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["truth_status"] == "partial"
+    assert body["status_reasons"]
+    assert all(meta["editability"] != "editable" for meta in body["field_meta"].values())
+    assert body["field_meta"]["default_tax_rate"]["editability"] == "display_only"
+    assert body["field_meta"]["default_tax_rate"]["source"] == "static_config"
+    assert body["domain_sources"]["year_settings"] == "project_state"
+    assert body["domain_sources"]["corporate_actions"] == "workbook_fallback"
+
+
+def test_audit_summary_truth_does_not_imply_final_export_readiness(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    client = TestClient(create_app(project_dir=project))
+
+    response = client.get("/api/audit")
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["summary_only"] is True
+    assert body["truth_status"] == "partial"
+    assert body["workbook_backed_domains"]
+    assert any(reason["code"] == "audit_summary_only" for reason in body["status_reasons"])
+    assert any(reason["code"] == "workbook_backed_domains" for reason in body["status_reasons"])
 
 
 def test_workbook_export_reflects_project_state_fx(tmp_path):
@@ -592,7 +813,7 @@ def test_workbook_export_reflects_project_state_fx(tmp_path):
 
     client = TestClient(create_app(project_dir=project))
     result = client.app.state.runtime.calculate(write_workbook=True)
-    assert result.fx_years
+    assert result.fx_years.items
 
     wb = load_workbook(project / "stock_tax_system.xlsx")
     yearly_ws = wb["FX_Yearly"]

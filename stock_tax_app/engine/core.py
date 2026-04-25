@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
+
 import build_stock_tax_workbook as workbook
+
+from stock_tax_app.state import project_store
 
 from . import policy, ui_state
 from .models import (
@@ -12,8 +15,10 @@ from .models import (
     AppStatus,
     AuditSummary,
     Check,
+    CollectionTruth,
     EngineResult,
     FxYear,
+    FxYearList,
     ImportFile,
     ImportSummary,
     MatchedLot,
@@ -21,12 +26,26 @@ from .models import (
     NextAction,
     OpenLot,
     OpenPosition,
+    OpenPositionList,
     Sell,
+    SellList,
+    SettingFieldTruth,
     SourceRef,
     TaxYear,
+    TaxYearList,
+    TruthMeta,
+    TruthReason,
 )
 
 FRONTEND_READY_HREFS = frozenset({"/", "/import", "/tax-years"})
+WORKBOOK_BACKED_DOMAINS = (
+    "corporate_actions",
+    "locked_years",
+    "frozen_inventory",
+    "frozen_lot_matching",
+    "frozen_snapshots",
+    "filed_year_reconciliation",
+)
 _PLACEHOLDER_HREF_FALLBACKS = {
     "/audit": "/",
     "/fx": "/",
@@ -81,6 +100,118 @@ def _check_href(category: str) -> str:
     return _frontend_ready_href("/audit")
 
 
+def _legacy_rows(legacy_user_state: dict[str, Any], sheet: str) -> list[dict[str, Any]]:
+    rows = legacy_user_state.get(sheet) or []
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _legacy_has_year_row(legacy_user_state: dict[str, Any], sheet: str, year: int) -> bool:
+    for row in _legacy_rows(legacy_user_state, sheet):
+        try:
+            if int(row.get("Tax year")) == year:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def _legacy_has_method_row(
+    legacy_user_state: dict[str, Any],
+    year: int,
+    instrument_id: str | None = None,
+) -> bool:
+    for row in _legacy_rows(legacy_user_state, "Method_Selection"):
+        try:
+            row_year = int(row.get("Tax year"))
+        except (TypeError, ValueError):
+            continue
+        if row_year != year:
+            continue
+        if instrument_id is None or str(row.get("Instrument_ID") or "").strip() == instrument_id:
+            return True
+    return False
+
+
+def _legacy_has_instrument_map_row(legacy_user_state: dict[str, Any], symbol: str) -> bool:
+    return any(
+        str(row.get("Yahoo Symbol") or "").strip() == symbol
+        for row in _legacy_rows(legacy_user_state, "Instrument_Map")
+    )
+
+
+def _legacy_daily_dates_for_year(legacy_user_state: dict[str, Any], year: int) -> set[str]:
+    dates: set[str] = set()
+    for row in _legacy_rows(legacy_user_state, "FX_Daily"):
+        value = row.get("Date")
+        resolved: date | None = None
+        if isinstance(value, datetime):
+            resolved = value.date()
+        elif isinstance(value, date):
+            resolved = value
+        elif isinstance(value, str):
+            try:
+                resolved = date.fromisoformat(value.strip())
+            except ValueError:
+                resolved = None
+        if resolved is not None and resolved.year == year:
+            dates.add(resolved.isoformat())
+    return dates
+
+
+def _unique_sources(*sources: str) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for source in sources:
+        if not source or source in seen:
+            continue
+        seen.add(source)
+        ordered.append(source)
+    return ordered
+
+
+def _reason(code: str, message: str) -> TruthReason:
+    return TruthReason(code=code, message=message)
+
+
+def _reasons_from_checks(checks: list[Check]) -> list[TruthReason]:
+    return [_reason(f"check_{check.id}", check.message) for check in checks]
+
+
+def _remaining_workbook_backed_domains() -> list[str]:
+    return list(WORKBOOK_BACKED_DOMAINS)
+
+
+def _global_truth_status(unresolved_checks: list[Check]) -> str:
+    if any(check.level == "error" for check in unresolved_checks):
+        return "blocked"
+    if _remaining_workbook_backed_domains():
+        return "partial"
+    if any(check.level == "warn" for check in unresolved_checks):
+        return "needs_review"
+    return "ready"
+
+
+def _collection_truth(
+    *,
+    status: str,
+    reasons: list[TruthReason],
+    sources: list[str],
+    items: list[Any],
+    summary: str,
+    empty_meaning: str | None = None,
+) -> CollectionTruth:
+    if empty_meaning is None:
+        empty_meaning = "not_empty" if items else "no_data"
+    return CollectionTruth(
+        status=status,
+        reasons=reasons,
+        sources=sources,
+        summary=summary,
+        item_count=len(items),
+        empty_meaning=empty_meaning,
+    )
+
+
 def _build_checks(calc: workbook.CalculationResult) -> list[Check]:
     rows = workbook.build_check_rows(
         sim_warnings=calc.sim_warnings,
@@ -113,7 +244,77 @@ def _build_checks(calc: workbook.CalculationResult) -> list[Check]:
     return checks
 
 
-def _build_import_summary(calc: workbook.CalculationResult, csv_dir: Path) -> ImportSummary:
+def _year_settings_source(project_state: Any, legacy_user_state: dict[str, Any], year: int) -> str:
+    if year in project_state.year_settings:
+        return "project_state"
+    if _legacy_has_year_row(legacy_user_state, "Settings", year):
+        return "workbook_fallback"
+    return "generated_default"
+
+
+def _method_source(
+    project_state: Any,
+    legacy_user_state: dict[str, Any],
+    year: int,
+) -> str:
+    if policy.is_filed(year):
+        return "static_config"
+    if project_state.method_selection.get(year):
+        return "project_state"
+    if _legacy_has_method_row(legacy_user_state, year):
+        return "workbook_fallback"
+    return "generated_default"
+
+
+def _reconciliation_source(calc: workbook.CalculationResult, year: int) -> str:
+    if not policy.is_filed(year):
+        return "unavailable"
+    if year in calc.filed_reconciliation:
+        return "workbook_fallback"
+    return "generated_default"
+
+
+def _instrument_map_source(project_state: Any, legacy_user_state: dict[str, Any], symbol: str) -> str:
+    if symbol in project_state.instrument_map:
+        return "project_state"
+    if _legacy_has_instrument_map_row(legacy_user_state, symbol):
+        return "workbook_fallback"
+    return "generated_default"
+
+
+def _daily_rate_source(
+    *,
+    project_state: Any,
+    legacy_user_state: dict[str, Any],
+    calc: workbook.CalculationResult,
+    year: int,
+    required_dates: set[date],
+) -> str:
+    if not required_dates:
+        return "unavailable"
+
+    project_state_dates = {
+        iso_date for iso_date in project_state.fx_daily.keys() if iso_date.startswith(f"{year:04d}-")
+    }
+    required_iso_dates = {value.isoformat() for value in required_dates}
+    if required_iso_dates and required_iso_dates.issubset(project_state_dates):
+        return "project_state"
+
+    legacy_dates = _legacy_daily_dates_for_year(legacy_user_state, year)
+    if required_iso_dates & legacy_dates:
+        return "workbook_fallback"
+
+    if any(value.year == year for value in calc.fx_daily):
+        return "cnb_cache"
+
+    return "unavailable"
+
+
+def _build_import_summary(
+    calc: workbook.CalculationResult,
+    csv_dir: Path,
+    unresolved_checks: list[Check],
+) -> ImportSummary:
     rows_by_file: dict[str, list[workbook.RawRow]] = defaultdict(list)
     for row in calc.raw_rows:
         rows_by_file[row.source_file].append(row)
@@ -163,12 +364,30 @@ def _build_import_summary(calc: workbook.CalculationResult, csv_dir: Path) -> Im
             )
         )
 
+    if calc.calculation_blocked:
+        truth_status = "partial"
+        reasons = [_reason("calculation_blocked", "Import data loaded, but downstream calculation is blocked.")]
+    elif total_warnings:
+        truth_status = "needs_review"
+        reasons = [_reason("import_warnings", "Some input files contain warnings and should be reviewed.")]
+    else:
+        truth_status = "ready"
+        reasons = []
+    if unresolved_checks and calc.calculation_blocked:
+        reasons.extend(_reasons_from_checks([check for check in unresolved_checks if check.level == "error"]))
+
     return ImportSummary(
         folder=str(csv_dir),
         files=files,
         total_trade_rows=sum(f.trade_rows for f in files),
         total_ignored_rows=sum(f.ignored_rows for f in files),
         total_warnings=total_warnings,
+        truth=TruthMeta(
+            status=truth_status,
+            reasons=reasons,
+            sources=["calculated"],
+            summary="Real CSV import summary from backend-owned normalization.",
+        ),
     )
 
 
@@ -199,7 +418,30 @@ def _effective_year_method(calc: workbook.CalculationResult, year: int) -> str:
 def _build_tax_years(
     calc: workbook.CalculationResult,
     state: ui_state.UIState,
-) -> list[TaxYear]:
+    project_state: Any,
+    legacy_user_state: dict[str, Any],
+    unresolved_checks: list[Check],
+) -> TaxYearList:
+    if calc.calculation_blocked:
+        error_checks = [check for check in unresolved_checks if check.level == "error"]
+        return TaxYearList(
+            items=[],
+            truth=_collection_truth(
+                status="blocked",
+                reasons=[
+                    _reason(
+                        "calculation_blocked",
+                        "Tax years are unavailable because calculation is blocked.",
+                    ),
+                    *_reasons_from_checks(error_checks),
+                ],
+                sources=["unavailable", "calculated"],
+                items=[],
+                summary="Empty tax-year list is blocked, not a genuine no-data result.",
+                empty_meaning="blocked",
+            ),
+        )
+
     summary_by_year = {int(row["Tax year"]): row for row in calc.yearly_summary}
     comparison_by_year = {int(row["Tax year"]): row for row in calc.method_comparison}
     years: list[TaxYear] = []
@@ -243,6 +485,8 @@ def _build_tax_years(
                 MAX_GAIN=float(cmp_row.get("MAX_GAIN tax CZK") or 0.0),
             )
 
+        settings_source = _year_settings_source(project_state, legacy_user_state, year)
+        method_source = _method_source(project_state, legacy_user_state, year)
         years.append(
             TaxYear(
                 year=year,
@@ -267,15 +511,57 @@ def _build_tax_years(
                 reconciliation_status=reconciliation_status,
                 reconciliation_note=reconciliation_note,
                 method_comparison=method_comparison,
+                truth_status="ready",
+                settings_source=settings_source,
+                method_source=method_source,
+                reconciliation_source=_reconciliation_source(calc, year),
             )
         )
-    return years
+
+    return TaxYearList(
+        items=years,
+        truth=_collection_truth(
+            status="ready",
+            reasons=[],
+            sources=_unique_sources(
+                "calculated",
+                *(year.settings_source for year in years),
+                *(year.method_source for year in years),
+                *(year.reconciliation_source for year in years),
+            ),
+            items=years,
+            summary="Tax-year response includes explicit provenance for policy and reconciliation fields.",
+        ),
+    )
 
 
 def _build_sales(
     calc: workbook.CalculationResult,
     state: ui_state.UIState,
-) -> list[Sell]:
+    project_state: Any,
+    legacy_user_state: dict[str, Any],
+    unresolved_checks: list[Check],
+) -> SellList:
+    if calc.calculation_blocked:
+        error_checks = [check for check in unresolved_checks if check.level == "error"]
+        return SellList(
+            items=[],
+            truth=_collection_truth(
+                status="blocked",
+                reasons=[
+                    _reason(
+                        "calculation_blocked",
+                        "Sales evidence is unavailable because calculation is blocked.",
+                    ),
+                    *_reasons_from_checks(error_checks),
+                ],
+                sources=["unavailable", "calculated"],
+                items=[],
+                summary="Empty sales list is blocked, not a genuine no-sales result.",
+                empty_meaning="blocked",
+            ),
+        )
+
     lines_by_sell: dict[str, list[workbook.MatchLine]] = defaultdict(list)
     for line in calc.match_lines:
         lines_by_sell[line.sell_tx_id].append(line)
@@ -318,6 +604,16 @@ def _build_sales(
             )
             for line in lines
         ]
+        instrument_source = _instrument_map_source(project_state, legacy_user_state, tx.symbol)
+        sell_truth = "needs_review" if unmatched_quantity > 1e-9 else "ready"
+        sell_reasons = []
+        if unmatched_quantity > 1e-9:
+            sell_reasons.append(
+                _reason(
+                    "unmatched_quantity",
+                    f"Sell {sell_id} still has unmatched quantity {unmatched_quantity:.6f}.",
+                )
+            )
         sells.append(
             Sell(
                 id=sell_id,
@@ -336,6 +632,9 @@ def _build_sales(
                 unmatched_quantity=float(unmatched_quantity),
                 classification=classification,
                 review_status=review.review_status,
+                truth_status=sell_truth,
+                instrument_map_source=instrument_source,
+                review_state_source="ui_state",
                 source=SourceRef(file=tx.source_file, row=tx.source_row),
                 note=review.note,
                 total_gain_loss_czk=float(
@@ -343,12 +642,58 @@ def _build_sales(
                 ),
                 total_cost_basis_czk=float(sum(line.cost_basis_czk for line in lines)),
                 matched_lots=matched_lots,
+                truth=TruthMeta(
+                    status=sell_truth,
+                    reasons=sell_reasons,
+                    sources=_unique_sources("calculated", instrument_source, "ui_state"),
+                    summary="Sale detail is calculated evidence layered with UI review state.",
+                ),
             )
         )
-    return sells
+
+    response_status = "needs_review" if any(sell.truth_status != "ready" for sell in sells) else "ready"
+    return SellList(
+        items=sells,
+        truth=_collection_truth(
+            status=response_status,
+            reasons=[],
+            sources=_unique_sources(
+                "calculated",
+                *(sell.instrument_map_source for sell in sells),
+                *(sell.review_state_source for sell in sells),
+            ),
+            items=sells,
+            summary="Sales response is real calculation output with explicit instrument-map and UI-state provenance.",
+        ),
+    )
 
 
-def _build_open_positions(calc: workbook.CalculationResult) -> list[OpenPosition]:
+def _build_open_positions(
+    calc: workbook.CalculationResult,
+    project_state: Any,
+    legacy_user_state: dict[str, Any],
+    unresolved_checks: list[Check],
+) -> OpenPositionList:
+    if calc.calculation_blocked:
+        error_checks = [check for check in unresolved_checks if check.level == "error"]
+        return OpenPositionList(
+            items=[],
+            truth=_collection_truth(
+                status="blocked",
+                reasons=[
+                    _reason(
+                        "calculation_blocked",
+                        "Open positions are unavailable because calculation is blocked.",
+                    ),
+                    *_reasons_from_checks(error_checks),
+                ],
+                sources=["unavailable", "calculated"],
+                items=[],
+                summary="Empty open-position list is blocked, not a genuine empty inventory result.",
+                empty_meaning="blocked",
+            ),
+        )
+
     rows = workbook.build_open_position_rows(
         calc.raw_rows,
         calc.instrument_map,
@@ -384,9 +729,31 @@ def _build_open_positions(calc: workbook.CalculationResult) -> list[OpenPosition
     positions: list[OpenPosition] = []
     for inst in sorted(set(rows_by_inst.keys()) | set(lots_by_inst.keys())):
         row = rows_by_inst.get(inst, {})
+        ticker = ticker_by_inst.get(inst, inst)
+        instrument_source = _instrument_map_source(project_state, legacy_user_state, ticker)
+        status = str(row.get("Status") or "UNKNOWN").lower()
+        reason_code = None
+        reason = None
+        truth_status = "ready"
+        if status == "unknown":
+            truth_status = "unknown"
+            if instrument_source == "generated_default":
+                reason_code = "unknown_missing_mapping"
+                reason = (
+                    "Open position is unresolved because the instrument map is still a generated default "
+                    "and Yahoo position data is missing."
+                )
+            else:
+                reason_code = "unknown_missing_yahoo_position"
+                reason = "Yahoo position rows are missing for this instrument."
+        elif status in {"warn", "error"}:
+            truth_status = "needs_review"
+            reason_code = "position_mismatch"
+            reason = "Calculated quantity does not fully reconcile to imported Yahoo position rows."
+
         positions.append(
             OpenPosition(
-                ticker=ticker_by_inst.get(inst, inst),
+                ticker=ticker,
                 instrument_id=inst,
                 calculated_qty=float(row.get("Calculated qty") or 0.0),
                 yahoo_qty=(
@@ -395,33 +762,97 @@ def _build_open_positions(calc: workbook.CalculationResult) -> list[OpenPosition
                 difference=(
                     float(row["Difference"]) if row.get("Difference") is not None else None
                 ),
-                status=str(row.get("Status") or "UNKNOWN").lower(),
+                status=status,
                 lots=sorted(lots_by_inst.get(inst, []), key=lambda lot: (lot.buy_date, lot.lot_id)),
+                truth_status=truth_status,
+                status_reason_code=reason_code,
+                status_reason=reason,
+                instrument_map_source=instrument_source,
+                inventory_source="calculated",
             )
         )
-    return positions
+
+    response_status = (
+        "partial"
+        if any(position.truth_status == "unknown" for position in positions)
+        else "needs_review"
+        if any(position.truth_status == "needs_review" for position in positions)
+        else "ready"
+    )
+    reasons = []
+    if any(position.truth_status == "unknown" for position in positions):
+        reasons.append(
+            _reason(
+                "unknown_positions_present",
+                "Some open positions remain unknown and must not be shown as fully resolved.",
+            )
+        )
+    return OpenPositionList(
+        items=positions,
+        truth=_collection_truth(
+            status=response_status,
+            reasons=reasons,
+            sources=_unique_sources(
+                "calculated",
+                *(position.instrument_map_source for position in positions),
+            ),
+            items=positions,
+            summary="Open positions expose row-level unknown and mismatch reasons instead of ambiguous status pills.",
+        ),
+    )
 
 
-def _build_fx_years(calc: workbook.CalculationResult) -> list[FxYear]:
-    tx_dates_by_year: dict[int, set] = defaultdict(set)
+def _build_fx_years(
+    calc: workbook.CalculationResult,
+    project_state: Any,
+    legacy_user_state: dict[str, Any],
+    unresolved_checks: list[Check],
+) -> FxYearList:
+    tx_dates_by_year: dict[int, set[date]] = defaultdict(set)
     for tx in calc.txs:
         tx_dates_by_year[tx.trade_date.year].add(tx.trade_date)
 
     years: list[FxYear] = []
     for year in sorted(calc.years):
         method = str(calc.settings.get(year, {}).get("fx_method") or workbook.DEFAULT_FX_METHOD)
+        required_dates = tx_dates_by_year.get(year, set())
         missing_dates = sorted(
-            d for d in tx_dates_by_year.get(year, set())
-            if calc.fx.inspect_date(d)[0] is None
+            value for value in required_dates
+            if calc.fx.inspect_date(value)[0] is None
         )
         source_label = calc.fx_yearly_sources.get(year, "default")
+        if method == "FX_DAILY_CNB":
+            rate_source = _daily_rate_source(
+                project_state=project_state,
+                legacy_user_state=legacy_user_state,
+                calc=calc,
+                year=year,
+                required_dates=required_dates,
+            )
+        elif year in project_state.fx_yearly:
+            rate_source = "project_state"
+        elif _legacy_has_year_row(legacy_user_state, "FX_Yearly", year):
+            rate_source = "workbook_fallback"
+        elif calc.fx_yearly.get(year) is not None:
+            rate_source = "static_config"
+        else:
+            rate_source = "unavailable"
+
+        truth_status = "ready"
+        status_reason = None
+        if missing_dates:
+            truth_status = "blocked" if calc.calculation_blocked else "needs_review"
+            status_reason = (
+                f"{len(missing_dates)} required FX date(s) are still missing for {year}."
+            )
+
         years.append(
             FxYear(
                 year=year,
                 method=method,
                 unified_rate=calc.fx_yearly.get(year),
-                daily_cached=sum(1 for d in calc.fx_daily if d.year == year),
-                daily_expected=len(tx_dates_by_year.get(year, set())) if method == "FX_DAILY_CNB" else 0,
+                daily_cached=sum(1 for value in calc.fx_daily if value.year == year),
+                daily_expected=len(required_dates) if method == "FX_DAILY_CNB" else 0,
                 missing_dates=missing_dates if method == "FX_DAILY_CNB" else [],
                 source_label=source_label,
                 source_url=None,
@@ -430,12 +861,60 @@ def _build_fx_years(calc: workbook.CalculationResult) -> list[FxYear]:
                     calc.fx_yearly_manual.get(year, "manual" in source_label.lower())
                 ),
                 locked=policy.is_locked(year) or bool(calc.locked_years.get(year)),
+                truth_status=truth_status,
+                rate_source=rate_source,
+                status_reason=status_reason,
             )
         )
-    return years
+
+    status = (
+        "blocked"
+        if any(year.truth_status == "blocked" for year in years)
+        else "needs_review"
+        if any(year.truth_status == "needs_review" for year in years)
+        else "ready"
+    )
+    reasons = []
+    if calc.calculation_blocked:
+        reasons.append(_reason("calculation_blocked", "FX truth is explicit: required rates are still missing."))
+        reasons.extend(_reasons_from_checks([check for check in unresolved_checks if check.level == "error"]))
+    return FxYearList(
+        items=years,
+        truth=_collection_truth(
+            status=status,
+            reasons=reasons,
+            sources=_unique_sources("calculated", *(year.rate_source for year in years)),
+            items=years,
+            summary="FX response discloses whether effective rates came from ProjectState, workbook fallback, cache, or static defaults.",
+        ),
+    )
 
 
 def _build_settings(project_dir: Path, csv_dir: Path, output_path: Path) -> AppSettings:
+    field_names = [
+        "project_folder",
+        "csv_folder",
+        "output_path",
+        "cache_folder",
+        "default_tax_rate",
+        "default_fx_method",
+        "default_100k",
+        "unmatched_qty_tolerance",
+        "position_reconciliation_tolerance",
+        "backup_on_recalc",
+        "require_confirm_unlock",
+        "keep_n_snapshots",
+        "excel_validation",
+    ]
+    field_meta = {
+        name: SettingFieldTruth(
+            editability="display_only",
+            source="static_config",
+            status="not_implemented",
+            reason="GET /api/settings is truthful display-only metadata. PATCH /api/settings is not implemented yet.",
+        )
+        for name in field_names
+    }
     return AppSettings(
         project_folder=str(project_dir),
         csv_folder=str(csv_dir),
@@ -450,12 +929,55 @@ def _build_settings(project_dir: Path, csv_dir: Path, output_path: Path) -> AppS
         require_confirm_unlock=True,
         keep_n_snapshots=1,
         excel_validation="strict",
+        truth_status="partial",
+        status_reasons=[
+            _reason(
+                "settings_display_only",
+                "Settings are exposed for truthful display only. Editing is not implemented in this slice.",
+            )
+        ],
+        field_meta=field_meta,
+        domain_sources={
+            "year_settings": "project_state",
+            "method_selection": "project_state",
+            "fx_yearly": "project_state",
+            "fx_daily": "project_state",
+            "instrument_map": "project_state",
+            "review_state": "ui_state",
+            "corporate_actions": "workbook_fallback",
+            "locked_years": "workbook_fallback",
+            "frozen_inventory": "workbook_fallback",
+            "frozen_snapshots": "workbook_fallback",
+            "filed_year_reconciliation": "workbook_fallback",
+        },
     )
 
 
-def _build_audit_summary(calc: workbook.CalculationResult, tax_years: list[TaxYear]) -> AuditSummary:
+def _build_audit_summary(calc: workbook.CalculationResult, tax_years: TaxYearList) -> AuditSummary:
+    workbook_backed_domains = _remaining_workbook_backed_domains()
+    reasons = [
+        _reason(
+            "audit_summary_only",
+            "Audit is summary-only in this slice and must not be treated as final export readiness.",
+        )
+    ]
+    if calc.calculation_blocked:
+        reasons.insert(
+            0,
+            _reason(
+                "calculation_blocked",
+                "Audit readiness is blocked because required calculation checks are unresolved.",
+            ),
+        )
+    if workbook_backed_domains:
+        reasons.append(
+            _reason(
+                "workbook_backed_domains",
+                "Audit still depends on workbook-backed domains: " + ", ".join(workbook_backed_domains) + ".",
+            )
+        )
     return AuditSummary(
-        year_rows=tax_years,
+        year_rows=tax_years.items,
         trace_counts={
             "csv_files": len(calc.inputs),
             "raw_rows": len(calc.raw_rows),
@@ -465,6 +987,10 @@ def _build_audit_summary(calc: workbook.CalculationResult, tax_years: list[TaxYe
             "open_lots": sum(1 for lot in calc.lots_final if lot.quantity_remaining > 1e-9),
         },
         locked_snapshots=sorted(calc.frozen_snapshots.keys()),
+        truth_status="blocked" if calc.calculation_blocked else "partial",
+        summary_only=True,
+        status_reasons=reasons,
+        workbook_backed_domains=workbook_backed_domains,
     )
 
 
@@ -487,14 +1013,27 @@ def _build_status(
             label="Review checks",
             href=_frontend_ready_href(first.href or "/"),
         )
+
+    workbook_backed_domains = _remaining_workbook_backed_domains()
+    status_reasons = _reasons_from_checks(unresolved_checks)
+    if workbook_backed_domains:
+        status_reasons.append(
+            _reason(
+                "workbook_backed_domains",
+                "Remaining workbook-backed domains: " + ", ".join(workbook_backed_domains) + ".",
+            )
+        )
     return AppStatus(
         project_path=str(project_dir),
         csv_folder=str(csv_dir),
         output_path=str(output_path),
         last_calculated_at=datetime.now(timezone.utc),
         global_status=global_status,
+        truth_status=_global_truth_status(unresolved_checks),
         next_action=next_action,
         unresolved_checks=unresolved_checks,
+        status_reasons=status_reasons,
+        workbook_backed_domains=workbook_backed_domains,
     )
 
 
@@ -518,24 +1057,22 @@ def run(
         workbook.write_calculation_result(calc, backup_existing=False)
 
     state = ui_state.load(output)
+    project_state = project_store.load_project_state(project_path)
+    legacy_user_state = workbook.load_existing_user_state(output)
     checks = _build_checks(calc)
     unresolved_checks = [check for check in checks if check.level != "info"]
-    if calc.calculation_blocked:
-        sales = []
-        tax_years = []
-        open_positions = []
-    else:
-        sales = _build_sales(calc, state)
-        tax_years = _build_tax_years(calc, state)
-        open_positions = _build_open_positions(calc)
-    fx_years = _build_fx_years(calc)
+
+    tax_years = _build_tax_years(calc, state, project_state, legacy_user_state, unresolved_checks)
+    sales = _build_sales(calc, state, project_state, legacy_user_state, unresolved_checks)
+    open_positions = _build_open_positions(calc, project_state, legacy_user_state, unresolved_checks)
+    fx_years = _build_fx_years(calc, project_state, legacy_user_state, unresolved_checks)
     settings = _build_settings(project_path, csv_path, output)
     audit_summary = _build_audit_summary(calc, tax_years)
     app_status = _build_status(project_path, csv_path, output, unresolved_checks)
 
     return EngineResult(
         app_status=app_status,
-        import_summary=_build_import_summary(calc, csv_path),
+        import_summary=_build_import_summary(calc, csv_path, unresolved_checks),
         tax_years=tax_years,
         unresolved_checks=unresolved_checks,
         sales=sales,

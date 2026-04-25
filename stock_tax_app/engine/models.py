@@ -35,6 +35,51 @@ class SourceRef(ApiModel):
     row: int
 
 
+TruthStatus = Literal[
+    "ready",
+    "needs_review",
+    "blocked",
+    "partial",
+    "unknown",
+    "not_implemented",
+]
+TruthSource = Literal[
+    "project_state",
+    "ui_state",
+    "workbook_fallback",
+    "calculated",
+    "generated_default",
+    "cnb_cache",
+    "static_config",
+    "unavailable",
+]
+CollectionEmptyMeaning = Literal[
+    "not_empty",
+    "no_data",
+    "blocked",
+    "unknown",
+    "not_implemented",
+]
+SettingEditability = Literal["editable", "read_only", "display_only", "not_implemented"]
+
+
+class TruthReason(ApiModel):
+    code: str
+    message: str
+
+
+class TruthMeta(ApiModel):
+    status: TruthStatus
+    reasons: List[TruthReason] = Field(default_factory=list)
+    sources: List[TruthSource] = Field(default_factory=list)
+    summary: Optional[str] = None
+
+
+class CollectionTruth(TruthMeta):
+    item_count: int = 0
+    empty_meaning: CollectionEmptyMeaning = "not_empty"
+
+
 # ---------------------------------------------------------------------
 # Status / checks
 # ---------------------------------------------------------------------
@@ -59,8 +104,11 @@ class AppStatus(ApiModel):
     output_path: str
     last_calculated_at: Optional[datetime] = None
     global_status: Literal["ready", "needs_review", "blocked"]
+    truth_status: TruthStatus = "ready"
     next_action: Optional[NextAction] = None
     unresolved_checks: List[Check] = Field(default_factory=list)
+    status_reasons: List[TruthReason] = Field(default_factory=list)
+    workbook_backed_domains: List[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------
@@ -89,6 +137,7 @@ class ImportSummary(ApiModel):
     total_trade_rows: int
     total_ignored_rows: int
     total_warnings: int
+    truth: TruthMeta = Field(default_factory=lambda: TruthMeta(status="ready"))
 
 
 # ---------------------------------------------------------------------
@@ -133,6 +182,15 @@ class TaxYear(ApiModel):
     reconciliation_status: ReconciliationStatus
     reconciliation_note: Optional[str] = None
     method_comparison: Optional[MethodComparison] = None
+    truth_status: TruthStatus = "ready"
+    settings_source: TruthSource = "generated_default"
+    method_source: TruthSource = "generated_default"
+    reconciliation_source: TruthSource = "unavailable"
+
+
+class TaxYearList(ApiModel):
+    items: List[TaxYear] = Field(default_factory=list)
+    truth: CollectionTruth
 
 
 # ---------------------------------------------------------------------
@@ -176,6 +234,9 @@ class SellSummary(ApiModel):
     unmatched_quantity: float
     classification: SellClassification
     review_status: ReviewStatus
+    truth_status: TruthStatus = "ready"
+    instrument_map_source: TruthSource = "generated_default"
+    review_state_source: TruthSource = "ui_state"
 
 
 class Sell(SellSummary):
@@ -185,6 +246,12 @@ class Sell(SellSummary):
     total_gain_loss_czk: float
     total_cost_basis_czk: float
     matched_lots: List[MatchedLot]
+    truth: TruthMeta = Field(default_factory=lambda: TruthMeta(status="ready"))
+
+
+class SellList(ApiModel):
+    items: List[SellSummary] = Field(default_factory=list)
+    truth: CollectionTruth
 
 
 # ---------------------------------------------------------------------
@@ -211,6 +278,16 @@ class OpenPosition(ApiModel):
     difference: Optional[float] = None
     status: OpenPositionStatus
     lots: List[OpenLot] = Field(default_factory=list)
+    truth_status: TruthStatus = "ready"
+    status_reason_code: Optional[str] = None
+    status_reason: Optional[str] = None
+    instrument_map_source: TruthSource = "generated_default"
+    inventory_source: TruthSource = "calculated"
+
+
+class OpenPositionList(ApiModel):
+    items: List[OpenPosition] = Field(default_factory=list)
+    truth: CollectionTruth
 
 
 # ---------------------------------------------------------------------
@@ -234,6 +311,14 @@ class FxYear(ApiModel):
     verified_at: Optional[datetime] = None
     manual_override: bool = False
     locked: bool
+    truth_status: TruthStatus = "ready"
+    rate_source: TruthSource = "unavailable"
+    status_reason: Optional[str] = None
+
+
+class FxYearList(ApiModel):
+    items: List[FxYear] = Field(default_factory=list)
+    truth: CollectionTruth
 
 
 # ---------------------------------------------------------------------
@@ -244,6 +329,17 @@ class AuditSummary(ApiModel):
     year_rows: List[TaxYear]
     trace_counts: Dict[str, int]
     locked_snapshots: List[int]
+    truth_status: TruthStatus = "partial"
+    summary_only: bool = True
+    status_reasons: List[TruthReason] = Field(default_factory=list)
+    workbook_backed_domains: List[str] = Field(default_factory=list)
+
+
+class SettingFieldTruth(ApiModel):
+    editability: SettingEditability
+    source: TruthSource
+    status: TruthStatus
+    reason: Optional[str] = None
 
 
 class AppSettings(ApiModel):
@@ -260,6 +356,10 @@ class AppSettings(ApiModel):
     require_confirm_unlock: bool
     keep_n_snapshots: int
     excel_validation: Literal["strict", "warn", "off"]
+    truth_status: TruthStatus = "partial"
+    status_reasons: List[TruthReason] = Field(default_factory=list)
+    field_meta: Dict[str, SettingFieldTruth] = Field(default_factory=dict)
+    domain_sources: Dict[str, TruthSource] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------
@@ -275,10 +375,10 @@ class EngineResult(ApiModel):
     """Everything the API needs, in one object."""
     app_status: AppStatus
     import_summary: ImportSummary
-    tax_years: List[TaxYear]
+    tax_years: TaxYearList
     unresolved_checks: List[Check]
-    sales: List[Sell]
-    open_positions: List[OpenPosition]
-    fx_years: List[FxYear]
+    sales: SellList
+    open_positions: OpenPositionList
+    fx_years: FxYearList
     audit_summary: AuditSummary
     settings: AppSettings

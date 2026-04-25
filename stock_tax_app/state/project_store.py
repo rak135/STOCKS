@@ -10,7 +10,9 @@ from typing import Any
 from .models import ProjectState, ProjectStateMetadata, SCHEMA_VERSION
 
 STATE_FILENAME = ".stock_tax_state.json"
-_MIGRATED_DOMAINS = frozenset({"year_settings", "method_selection", "fx_yearly", "fx_daily"})
+_MIGRATED_DOMAINS = frozenset(
+    {"year_settings", "method_selection", "fx_yearly", "fx_daily", "instrument_map"}
+)
 _FX_CURRENCY_PAIR = "USD/CZK"
 
 
@@ -48,7 +50,7 @@ def load_project_state(project_dir: Path | str) -> ProjectState:
         method_selection=_int_nested_str_dict(raw.get("method_selection")),
         fx_yearly=_int_fx_dict(raw.get("fx_yearly"), default_manual=True),
         fx_daily=_str_fx_dict(raw.get("fx_daily")),
-        instrument_map=_str_keyed_dict(raw.get("instrument_map")),
+        instrument_map=_str_instrument_map_dict(raw.get("instrument_map")),
         corporate_actions=_list_of_dicts(raw.get("corporate_actions")),
         locked_years=_int_bool_dict(raw.get("locked_years")),
         frozen_inventory=_int_keyed_list_dict(raw.get("frozen_inventory")),
@@ -113,6 +115,11 @@ def adopt_legacy_workbook_state(
             state.fx_daily[day] = fx_row
             changed = True
 
+    for symbol, mapping in _extract_instrument_map_from_legacy(legacy_state).items():
+        if overwrite or symbol not in state.instrument_map:
+            state.instrument_map[symbol] = mapping
+            changed = True
+
     if changed:
         save_project_state(project_dir, state)
     return state
@@ -135,6 +142,10 @@ def merge_project_state_with_legacy_fallback(
     merged["FX_Daily"] = _merge_fx_daily_rows(
         project_state,
         legacy_state.get("FX_Daily") or [],
+    )
+    merged["Instrument_Map"] = _merge_instrument_map_rows(
+        project_state,
+        legacy_state.get("Instrument_Map") or [],
     )
     return merged
 
@@ -208,6 +219,18 @@ def _extract_fx_daily_from_legacy(legacy_state: dict[str, Any]) -> dict[str, dic
             "source_note": source_note,
             "manual": "manual" in source_note.lower(),
         }
+    return out
+
+
+def _extract_instrument_map_from_legacy(
+    legacy_state: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for row in legacy_state.get("Instrument_Map", []):
+        symbol = str(row.get("Yahoo Symbol") or "").strip()
+        if not symbol:
+            continue
+        out[symbol] = _normalize_instrument_map_entry(symbol, row)
     return out
 
 
@@ -320,6 +343,30 @@ def _merge_fx_daily_rows(
     return [rows_by_day[key] for key in sorted(rows_by_day)]
 
 
+def _merge_instrument_map_rows(
+    project_state: ProjectState,
+    legacy_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows_by_symbol: dict[str, dict[str, Any]] = {}
+    for row in legacy_rows:
+        symbol = str(row.get("Yahoo Symbol") or "").strip()
+        if not symbol:
+            continue
+        rows_by_symbol[symbol] = dict(row)
+
+    for symbol, mapping in project_state.instrument_map.items():
+        normalized = _normalize_instrument_map_entry(symbol, mapping)
+        merged = dict(rows_by_symbol.get(symbol, {}))
+        merged["Yahoo Symbol"] = symbol
+        merged["Instrument_ID"] = normalized["instrument_id"]
+        merged["ISIN"] = normalized["isin"]
+        merged["Instrument name"] = normalized["instrument_name"]
+        merged["Notes"] = normalized["notes"]
+        rows_by_symbol[symbol] = merged
+
+    return [rows_by_symbol[symbol] for symbol in sorted(rows_by_symbol)]
+
+
 def _to_json_dict(state: ProjectState) -> dict[str, Any]:
     return {
         "metadata": {"schema_version": state.metadata.schema_version},
@@ -333,7 +380,10 @@ def _to_json_dict(state: ProjectState) -> dict[str, Any]:
             for k, v in sorted(_normalize_fx_yearly_payload(state.fx_yearly).items())
         },
         "fx_daily": dict(sorted(_normalize_fx_daily_payload(state.fx_daily).items())),
-        "instrument_map": dict(sorted(state.instrument_map.items())),
+        "instrument_map": {
+            symbol: entry
+            for symbol, entry in sorted(_normalize_instrument_map_payload(state.instrument_map).items())
+        },
         "corporate_actions": state.corporate_actions,
         "locked_years": {str(k): v for k, v in sorted(state.locked_years.items())},
         "frozen_inventory": {str(k): v for k, v in sorted(state.frozen_inventory.items())},
@@ -397,6 +447,10 @@ def _normalize_fx_daily_payload(raw: dict[str, dict[str, Any]]) -> dict[str, dic
     return _str_fx_dict(raw)
 
 
+def _normalize_instrument_map_payload(raw: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return _str_instrument_map_dict(raw)
+
+
 def _int_keyed_list_dict(raw: Any) -> dict[int, list[dict[str, Any]]]:
     out: dict[int, list[dict[str, Any]]] = {}
     for key, value in (raw or {}).items():
@@ -427,6 +481,16 @@ def _str_fx_dict(raw: Any) -> dict[str, dict[str, Any]]:
         normalized = _normalize_fx_entry(value)
         if date_key and normalized is not None:
             out[date_key] = normalized
+    return out
+
+
+def _str_instrument_map_dict(raw: Any) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for key, value in (raw or {}).items():
+        symbol = str(key).strip()
+        if not symbol or not isinstance(value, dict):
+            continue
+        out[symbol] = _normalize_instrument_map_entry(symbol, value)
     return out
 
 
@@ -474,6 +538,23 @@ def _normalize_fx_entry(
         "rate": rate,
         "source_note": source_note,
         "manual": manual,
+    }
+
+
+def _normalize_instrument_map_entry(symbol: str, raw: dict[str, Any]) -> dict[str, Any]:
+    instrument_id = str(
+        raw.get("instrument_id")
+        or raw.get("Instrument_ID")
+        or raw.get("instrument")
+        or symbol
+    ).strip() or symbol
+
+    return {
+        "yahoo_symbol": str(raw.get("yahoo_symbol") or raw.get("Yahoo Symbol") or symbol).strip() or symbol,
+        "instrument_id": instrument_id,
+        "isin": str(raw.get("isin") or raw.get("ISIN") or "").strip(),
+        "instrument_name": str(raw.get("instrument_name") or raw.get("Instrument name") or "").strip(),
+        "notes": str(raw.get("notes") or raw.get("Notes") or "").strip(),
     }
 
 

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import type { AppStatus, ImportSummary, TaxYear } from '../types/api'
+import type { AppStatus, ImportSummary, TaxYearsResponse } from '../types/api'
 
 async function request<T>(path: string): Promise<T> {
   const response = await fetch(path)
@@ -28,6 +28,6 @@ export function useImportQuery() {
 export function useYearsQuery() {
   return useQuery({
     queryKey: ['years'],
-    queryFn: () => request<TaxYear[]>('/api/years'),
+    queryFn: () => request<TaxYearsResponse>('/api/years'),
   })
 }
