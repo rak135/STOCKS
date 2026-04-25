@@ -1355,17 +1355,46 @@ def split_audit(txs):
     from stock_tax_app.engine.tax_summary import split_audit as _split_audit
     return _split_audit(txs)
 
+
+def extract_position_rows_with_provenance(raw_rows, instrument_map):
+    from stock_tax_app.engine.open_positions import (
+        extract_position_rows_with_provenance as _extract_with_provenance,
+    )
+
+    return _extract_with_provenance(
+        raw_rows,
+        instrument_map,
+        safe_float=safe_float,
+        parse_trade_date=parse_trade_date,
+    )
+
+
+def extract_position_rows(raw_rows, instrument_map):
+    from stock_tax_app.engine.open_positions import extract_position_rows as _extract_rows
+
+    return _extract_rows(
+        raw_rows,
+        instrument_map,
+        safe_float=safe_float,
+        parse_trade_date=parse_trade_date,
+    )
+
 def build_open_position_rows(
     raw_rows, instrument_map, lots, *,
     ok_tolerance: float = 1e-4,
     warn_tolerance: float = 1e-2,
 ):
-    from stock_tax_app.engine.workbook_export import build_open_position_rows as _bop
-    return _bop(raw_rows, instrument_map, lots,
-                safe_float=safe_float,
-                parse_trade_date=parse_trade_date,
-                ok_tolerance=ok_tolerance,
-                warn_tolerance=warn_tolerance)
+    from stock_tax_app.engine.open_positions import build_open_position_rows as _bop
+
+    return _bop(
+        raw_rows,
+        instrument_map,
+        lots,
+        safe_float=safe_float,
+        parse_trade_date=parse_trade_date,
+        ok_tolerance=ok_tolerance,
+        warn_tolerance=warn_tolerance,
+    )
 
 def build_check_rows(
     *,
