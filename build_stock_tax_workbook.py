@@ -32,12 +32,9 @@ import shutil
 import sys
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
-
-import urllib.request as _urlreq
-import json as _json
 
 import openpyxl
 from openpyxl import Workbook, load_workbook
@@ -47,6 +44,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
+from stock_tax_app.engine import fx as _engine_fx
 from stock_tax_app.engine import policy, ui_state
 from stock_tax_app.engine import matching as _matching_module
 from stock_tax_app.state import project_store
@@ -59,38 +57,20 @@ from stock_tax_app.state import project_store
 DEFAULT_TAX_RATE = 0.15
 DEFAULT_APPLY_100K = False
 DEFAULT_100K_THRESHOLD = 100_000.0  # CZK
-DEFAULT_FX_METHOD = "FX_UNIFIED_GFR"
-SUPPORTED_FX_METHODS = ("FX_DAILY_CNB", "FX_UNIFIED_GFR")
+DEFAULT_FX_METHOD = _engine_fx.DEFAULT_FX_METHOD
+SUPPORTED_FX_METHODS = _engine_fx.SUPPORTED_FX_METHODS
 SUPPORTED_METHODS = policy.SUPPORTED_METHODS
 DEFAULT_METHOD = policy.DEFAULT_METHOD
 
-# GFŘ unified yearly USD/CZK rates (Czech tax authority official rates).
-# Source: GFŘ pokyn (instruction) D-series, published annually by the Czech
-# Financial Administration (Generální finanční ředitelství).
-# Use FX_UNIFIED_GFR method — this is the correct legal basis for Czech PIT.
-# Earlier years use best-available GFŘ / CNB annual averages.
-DEFAULT_FX_YEARLY = {
-    2015: 24.60, 2016: 24.44, 2017: 23.38, 2018: 21.78,
-    2019: 22.93, 2020: 23.14, 2021: 21.68, 2022: 23.36,
-    2023: 22.21,
-    2024: 23.28,  # GFŘ-D-65  ← authoritative
-    2025: 21.84,  # GFŘ-D-75  ← authoritative
-    2026: 22.00,  # placeholder — update when GFŘ publishes D-xx for 2026
-}
-
-# Official GFŘ unified USD/CZK rates {year: (rate, source_label)}.
-GFR_OFFICIAL_RATES = {
-    2023: (22.21, "GFŘ-D-57"),
-    2024: (23.28, "GFŘ-D-65"),
-    2025: (21.84, "GFŘ-D-75"),
-}
+DEFAULT_FX_YEARLY = _engine_fx.DEFAULT_FX_YEARLY
+GFR_OFFICIAL_RATES = _engine_fx.GFR_OFFICIAL_RATES
 
 # Compatibility aliases derived from stock_tax_app.engine.policy.
 YEAR_DEFAULT_METHODS = policy.YEAR_DEFAULT_METHODS
 FILED_YEARS = policy.FILED_YEARS
-# CNB daily FX cache file (written next to the workbook).
-CNB_DAILY_CACHE_FILE = "cnb_daily_cache.json"
+CNB_DAILY_CACHE_FILE = _engine_fx.CNB_DAILY_CACHE_FILE
 CANONICAL_OUTPUT_NAME = "stock_tax_system.xlsx"
+FXResolver = _engine_fx.FXResolver
 
 TX_SIDES = ("BUY", "SELL")
 CA_TYPES = ("SPLIT", "REVERSE_SPLIT", "TICKER_CHANGE")
@@ -545,55 +525,12 @@ def _to_bool(value: Any, default: bool) -> bool:
 
 def build_fx_tables(user_state: Dict[str, Any], years: List[int]
                     ) -> Tuple[Dict[int, float], Dict[date, float], Dict[int, str], Dict[int, bool], Dict[date, str]]:
-    """Return (yearly_rates, daily_rates, yearly_sources, yearly_manual, daily_sources).
-
-    yearly_sources maps year → source label (e.g. "GFŘ-D-65" or "manual" or "default").
-    """
-    yearly: Dict[int, float] = {}
-    yearly_src: Dict[int, str] = {}
-    yearly_manual: Dict[int, bool] = {}
-    for row in user_state.get("FX_Yearly", []):
-        try:
-            y = int(row.get("Tax year"))
-            r = float(row.get("USD_CZK"))
-        except (TypeError, ValueError):
-            continue
-        yearly[y] = r
-        src_note = (row.get("Source / note") or "").strip()
-        yearly_src[y] = src_note if src_note else "manual"
-        if row.get("__manual__") is None:
-            yearly_manual[y] = not src_note or "manual" in src_note.lower()
-        else:
-            yearly_manual[y] = _to_bool(row.get("__manual__"), False)
-    for y in years:
-        if y not in yearly:
-            if y in GFR_OFFICIAL_RATES:
-                official_r, official_label = GFR_OFFICIAL_RATES[y]
-                yearly[y] = official_r
-                yearly_src[y] = official_label
-                yearly_manual[y] = False
-            elif y in DEFAULT_FX_YEARLY:
-                yearly[y] = DEFAULT_FX_YEARLY[y]
-                yearly_src[y] = "default"
-                yearly_manual[y] = False
-
-    daily: Dict[date, float] = {}
-    daily_src: Dict[date, str] = {}
-    for row in user_state.get("FX_Daily", []):
-        d = row.get("Date")
-        rate = row.get("USD_CZK")
-        if isinstance(d, datetime):
-            d = d.date()
-        elif isinstance(d, str):
-            d = parse_trade_date(d)
-        if not isinstance(d, date) or rate is None:
-            continue
-        try:
-            daily[d] = float(rate)
-            daily_src[d] = str(row.get("Source / note") or "").strip()
-        except (TypeError, ValueError):
-            continue
-    return yearly, daily, yearly_src, yearly_manual, daily_src
+    return _engine_fx.build_fx_tables(
+        user_state,
+        years,
+        parse_trade_date=parse_trade_date,
+        to_bool=_to_bool,
+    )
 
 
 def build_instrument_map(user_state: Dict[str, Any],
@@ -974,66 +911,18 @@ def load_filed_reconciliation(user_state: Dict[str, Any]
 # -----------------------------------------------------------------------
 
 def _cnb_cache_path(workbook_path: Path) -> Path:
-    return workbook_path.parent / CNB_DAILY_CACHE_FILE
+    return _engine_fx.cnb_cache_path(workbook_path)
 
 
 def _load_cnb_cache(cache_path: Path) -> Dict[str, float]:
-    """Load {date_iso: rate} from JSON cache file."""
-    if not cache_path.exists():
-        return {}
-    try:
-        with cache_path.open("r", encoding="utf-8") as fh:
-            return _json.load(fh)
-    except Exception:
-        return {}
+    return _engine_fx.load_cnb_cache(cache_path)
 
 
 def _save_cnb_cache(cache_path: Path, data: Dict[str, float]) -> None:
-    try:
-        with cache_path.open("w", encoding="utf-8") as fh:
-            _json.dump(data, fh, indent=2)
-    except Exception:
-        pass
+    _engine_fx.save_cnb_cache(cache_path, data)
 
 
-def download_cnb_daily_rates_year(year: int, timeout: int = 15
-                                  ) -> Dict[date, float]:
-    """Download CNB daily USD/CZK rates for *year* from cnb.cz.
-
-    Returns {date: rate}. Empty dict on network failure.
-    """
-    url = (
-        "https://www.cnb.cz/en/financial_markets/"
-        "foreign_exchange_market/exchange_rate_fixing/"
-        f"year.txt?year={year}"
-    )
-    try:
-        req = _urlreq.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with _urlreq.urlopen(req, timeout=timeout) as resp:
-            text = resp.read().decode("utf-8", errors="replace")
-    except Exception:
-        return {}
-    out: Dict[date, float] = {}
-    for line in text.strip().splitlines():
-        parts = [p.strip() for p in line.split("|")]
-        if len(parts) < 5:
-            continue
-        # First column is date; find USD in code column (4th or 5th)
-        try:
-            d = datetime.strptime(parts[0], "%d.%m.%Y").date()
-        except ValueError:
-            continue
-        for ci in (4, 3):
-            if ci < len(parts) and parts[ci].upper() == "USD":
-                ri = ci + 1
-                if ri < len(parts):
-                    try:
-                        rate = float(parts[ri].replace(",", "."))
-                        out[d] = rate
-                    except ValueError:
-                        pass
-                break
-    return out
+download_cnb_daily_rates_year = _engine_fx.download_cnb_daily_rates_year
 
 
 def refresh_fx_daily_for_years(
@@ -1042,91 +931,15 @@ def refresh_fx_daily_for_years(
     years_needing_daily: List[int],
     cache_path: Path,
 ) -> Tuple[Dict[date, float], Dict[date, str], List[str]]:
-    """Download missing CNB daily rates for given years.
-
-    Returns (updated_rates, updated_sources, list_of_info_messages).
-    """
-    msgs: List[str] = []
-    cache_raw = _load_cnb_cache(cache_path)
-    # Seed fx_daily from cache
-    updated = dict(fx_daily)
-    updated_sources = dict(fx_daily_sources)
-    for iso, rate in cache_raw.items():
-        try:
-            d = date.fromisoformat(iso)
-            updated.setdefault(d, rate)
-            updated_sources.setdefault(d, "CNB cache")
-        except ValueError:
-            continue
-
-    for y in sorted(set(years_needing_daily)):
-        if any(d.year == y for d in updated):
-            msgs.append(f"FX_DAILY_CNB year {y}: using cached/manual rates.")
-            continue
-        msgs.append(f"FX_DAILY_CNB year {y}: downloading from CNB …")
-        downloaded = download_cnb_daily_rates_year(y)
-        if downloaded:
-            updated.update(downloaded)
-            for d in downloaded:
-                updated_sources[d] = "CNB download"
-            msgs.append(f"  → {len(downloaded)} dates downloaded for {y}.")
-            # Persist to cache
-            new_raw = dict(cache_raw)
-            for d, r in downloaded.items():
-                new_raw[d.isoformat()] = r
-            _save_cnb_cache(cache_path, new_raw)
-        else:
-            msgs.append(f"  → Download failed for {y} — add rates manually to FX_Daily.")
-    return updated, updated_sources, msgs
-
-
-# -----------------------------------------------------------------------
-# FX lookup
-# -----------------------------------------------------------------------
-
-class FXResolver:
-    def __init__(self, yearly: Dict[int, float], daily: Dict[date, float],
-                 settings: Dict[int, Dict[str, Any]]):
-        self.yearly = yearly
-        self.daily = daily
-        self.settings = settings
-        self.missing_daily: List[date] = []
-        self.missing_yearly: List[int] = []
-
-    def _lookup_daily_rate(self, d: date) -> Tuple[float | None, str]:
-        if d in self.daily:
-            return self.daily[d], "FX_DAILY_CNB_exact"
-        for back in range(1, 11):
-            alt = d - timedelta(days=back)
-            if alt in self.daily:
-                return self.daily[alt], f"FX_DAILY_CNB_back{back}d"
-        return None, "FX_DAILY_CNB_missing"
-
-    def inspect_date(self, d: date) -> Tuple[float | None, str]:
-        y = d.year
-        method = self.settings.get(y, {}).get("fx_method", DEFAULT_FX_METHOD)
-        if method == "FX_DAILY_CNB":
-            return self._lookup_daily_rate(d)
-        if y in self.yearly:
-            return self.yearly[y], "FX_UNIFIED_GFR"
-        return None, "FX_UNIFIED_GFR_missing"
-
-    def rate_for(self, d: date) -> Tuple[float, str]:
-        rate, label = self.inspect_date(d)
-        if rate is not None:
-            return rate, label
-        y = d.year
-        method = self.settings.get(y, {}).get("fx_method", DEFAULT_FX_METHOD)
-        if method == "FX_DAILY_CNB":
-            self.missing_daily.append(d)
-            raise ValueError(
-                "Missing FX_DAILY_CNB rate for "
-                f"{d.isoformat()} and no earlier rate within 10 days."
-            )
-        self.missing_yearly.append(y)
-        raise ValueError(
-            f"Missing {method} yearly FX rate for tax year {y}."
-        )
+    return _engine_fx.refresh_fx_daily_for_years(
+        fx_daily,
+        fx_daily_sources,
+        years_needing_daily,
+        cache_path,
+        load_cnb_cache_func=_load_cnb_cache,
+        save_cnb_cache_func=_save_cnb_cache,
+        download_cnb_daily_rates_year_func=download_cnb_daily_rates_year,
+    )
 
 
 def collect_required_fx_problems(
@@ -1134,59 +947,7 @@ def collect_required_fx_problems(
     settings: Dict[int, Dict[str, Any]],
     fx: FXResolver,
 ) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    missing_daily_by_year: Dict[int, set[date]] = defaultdict(set)
-    missing_yearly_by_year: Dict[int, str] = {}
-    for tx in txs:
-        y = tx.trade_date.year
-        method = str(settings.get(y, {}).get("fx_method") or DEFAULT_FX_METHOD)
-        rate, _label = fx.inspect_date(tx.trade_date)
-        if rate is not None:
-            continue
-        if method == "FX_DAILY_CNB":
-            missing_daily_by_year[y].add(tx.trade_date)
-        else:
-            missing_yearly_by_year[y] = method
-
-    for y in sorted(missing_yearly_by_year):
-        rows.append({
-            "severity": "ERROR",
-            "check": "missing_fx_yearly",
-            "detail": (
-                f"{missing_yearly_by_year[y]} has no yearly FX rate for tax year {y}."
-            ),
-            "source_file": "",
-            "source_row": "",
-        })
-
-    for y in sorted(missing_daily_by_year):
-        missing = sorted(missing_daily_by_year[y])
-        preview = ", ".join(d.isoformat() for d in missing[:3])
-        if len(missing) > 3:
-            preview += ", ..."
-        rows.append({
-            "severity": "ERROR",
-            "check": "missing_fx_daily",
-            "detail": (
-                f"{len(missing)} transaction date(s) in {y} lack FX_DAILY_CNB "
-                f"coverage within the 10-day lookback window: {preview}"
-            ),
-            "source_file": "",
-            "source_row": "",
-        })
-
-    if rows:
-        rows.append({
-            "severity": "ERROR",
-            "check": "fx_calculation_blocked",
-            "detail": (
-                "Trusted calculation is blocked until required FX rates are available. "
-                "No silent yearly or 22.0 fallback was used."
-            ),
-            "source_file": "",
-            "source_row": "",
-        })
-    return rows
+    return _engine_fx.collect_required_fx_problems(txs, settings, fx)
 
 
 # -----------------------------------------------------------------------

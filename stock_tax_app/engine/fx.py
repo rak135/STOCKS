@@ -181,13 +181,24 @@ def refresh_fx_daily_for_years(
     fx_daily_sources: Dict[date, str],
     years_needing_daily: List[int],
     cache_path: Path,
+    *,
+    load_cnb_cache_func: Optional[Callable[[Path], Dict[str, float]]] = None,
+    save_cnb_cache_func: Optional[Callable[[Path, Dict[str, float]], None]] = None,
+    download_cnb_daily_rates_year_func: Optional[Callable[..., Dict[date, float]]] = None,
 ) -> Tuple[Dict[date, float], Dict[date, str], List[str]]:
     """Download missing CNB daily rates for given years.
 
     Returns (updated_rates, updated_sources, list_of_info_messages).
     """
     msgs: List[str] = []
-    cache_raw = load_cnb_cache(cache_path)
+    if load_cnb_cache_func is None:
+        load_cnb_cache_func = load_cnb_cache
+    if save_cnb_cache_func is None:
+        save_cnb_cache_func = save_cnb_cache
+    if download_cnb_daily_rates_year_func is None:
+        download_cnb_daily_rates_year_func = download_cnb_daily_rates_year
+
+    cache_raw = load_cnb_cache_func(cache_path)
     updated = dict(fx_daily)
     updated_sources = dict(fx_daily_sources)
     for iso, rate in cache_raw.items():
@@ -203,7 +214,7 @@ def refresh_fx_daily_for_years(
             msgs.append(f"FX_DAILY_CNB year {y}: using cached/manual rates.")
             continue
         msgs.append(f"FX_DAILY_CNB year {y}: downloading from CNB …")
-        downloaded = download_cnb_daily_rates_year(y)
+        downloaded = download_cnb_daily_rates_year_func(y)
         if downloaded:
             updated.update(downloaded)
             for d in downloaded:
@@ -212,7 +223,7 @@ def refresh_fx_daily_for_years(
             new_raw = dict(cache_raw)
             for d, r in downloaded.items():
                 new_raw[d.isoformat()] = r
-            save_cnb_cache(cache_path, new_raw)
+            save_cnb_cache_func(cache_path, new_raw)
         else:
             msgs.append(f"  → Download failed for {y} — add rates manually to FX_Daily.")
     return updated, updated_sources, msgs
