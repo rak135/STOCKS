@@ -47,7 +47,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
-from stock_tax_app.engine import policy
+from stock_tax_app.engine import policy, ui_state
 
 
 # -----------------------------------------------------------------------
@@ -272,6 +272,7 @@ class CalculationResult:
     yearly_summary: List[Dict[str, Any]]
     method_comparison: List[Dict[str, Any]]
     split_warnings: List[Dict[str, Any]]
+    calculation_blocked: bool = False
 
 
 # -----------------------------------------------------------------------
@@ -606,8 +607,8 @@ def build_fx_tables(user_state: Dict[str, Any], years: List[int]
                 official_r, official_label = GFR_OFFICIAL_RATES[y]
                 yearly[y] = official_r
                 yearly_src[y] = official_label
-            else:
-                yearly[y] = DEFAULT_FX_YEARLY.get(y, 22.0)
+            elif y in DEFAULT_FX_YEARLY:
+                yearly[y] = DEFAULT_FX_YEARLY[y]
                 yearly_src[y] = "default"
 
     daily: Dict[date, float] = {}
@@ -925,28 +926,102 @@ class FXResolver:
         self.daily = daily
         self.settings = settings
         self.missing_daily: List[date] = []
-        self.used_fallback_yearly: List[date] = []
+        self.missing_yearly: List[int] = []
 
-    def rate_for(self, d: date) -> Tuple[float, str]:
+    def _lookup_daily_rate(self, d: date) -> Tuple[float | None, str]:
+        if d in self.daily:
+            return self.daily[d], "FX_DAILY_CNB_exact"
+        for back in range(1, 11):
+            alt = d - timedelta(days=back)
+            if alt in self.daily:
+                return self.daily[alt], f"FX_DAILY_CNB_back{back}d"
+        return None, "FX_DAILY_CNB_missing"
+
+    def inspect_date(self, d: date) -> Tuple[float | None, str]:
         y = d.year
         method = self.settings.get(y, {}).get("fx_method", DEFAULT_FX_METHOD)
         if method == "FX_DAILY_CNB":
-            # Use exact date; fall back to nearest earlier date within 10 days.
-            if d in self.daily:
-                return self.daily[d], "FX_DAILY_CNB_exact"
-            for back in range(1, 11):
-                alt = d - timedelta(days=back)
-                if alt in self.daily:
-                    return self.daily[alt], f"FX_DAILY_CNB_back{back}d"
-            self.missing_daily.append(d)
-            if y in self.yearly:
-                self.used_fallback_yearly.append(d)
-                return self.yearly[y], "FX_DAILY_CNB_fallback_yearly"
-            return 22.0, "FX_DAILY_CNB_fallback_hardcoded"
-        # FX_UNIFIED_GFR or any unknown method
+            return self._lookup_daily_rate(d)
         if y in self.yearly:
             return self.yearly[y], "FX_UNIFIED_GFR"
-        return DEFAULT_FX_YEARLY.get(y, 22.0), "FX_UNIFIED_GFR_default"
+        return None, "FX_UNIFIED_GFR_missing"
+
+    def rate_for(self, d: date) -> Tuple[float, str]:
+        rate, label = self.inspect_date(d)
+        if rate is not None:
+            return rate, label
+        y = d.year
+        method = self.settings.get(y, {}).get("fx_method", DEFAULT_FX_METHOD)
+        if method == "FX_DAILY_CNB":
+            self.missing_daily.append(d)
+            raise ValueError(
+                "Missing FX_DAILY_CNB rate for "
+                f"{d.isoformat()} and no earlier rate within 10 days."
+            )
+        self.missing_yearly.append(y)
+        raise ValueError(
+            f"Missing {method} yearly FX rate for tax year {y}."
+        )
+
+
+def collect_required_fx_problems(
+    txs: List[Transaction],
+    settings: Dict[int, Dict[str, Any]],
+    fx: FXResolver,
+) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    missing_daily_by_year: Dict[int, set[date]] = defaultdict(set)
+    missing_yearly_by_year: Dict[int, str] = {}
+    for tx in txs:
+        y = tx.trade_date.year
+        method = str(settings.get(y, {}).get("fx_method") or DEFAULT_FX_METHOD)
+        rate, _label = fx.inspect_date(tx.trade_date)
+        if rate is not None:
+            continue
+        if method == "FX_DAILY_CNB":
+            missing_daily_by_year[y].add(tx.trade_date)
+        else:
+            missing_yearly_by_year[y] = method
+
+    for y in sorted(missing_yearly_by_year):
+        rows.append({
+            "severity": "ERROR",
+            "check": "missing_fx_yearly",
+            "detail": (
+                f"{missing_yearly_by_year[y]} has no yearly FX rate for tax year {y}."
+            ),
+            "source_file": "",
+            "source_row": "",
+        })
+
+    for y in sorted(missing_daily_by_year):
+        missing = sorted(missing_daily_by_year[y])
+        preview = ", ".join(d.isoformat() for d in missing[:3])
+        if len(missing) > 3:
+            preview += ", ..."
+        rows.append({
+            "severity": "ERROR",
+            "check": "missing_fx_daily",
+            "detail": (
+                f"{len(missing)} transaction date(s) in {y} lack FX_DAILY_CNB "
+                f"coverage within the 10-day lookback window: {preview}"
+            ),
+            "source_file": "",
+            "source_row": "",
+        })
+
+    if rows:
+        rows.append({
+            "severity": "ERROR",
+            "check": "fx_calculation_blocked",
+            "detail": (
+                "Trusted calculation is blocked until required FX rates are available. "
+                "No silent yearly or 22.0 fallback was used."
+            ),
+            "source_file": "",
+            "source_row": "",
+        })
+    return rows
 
 
 # -----------------------------------------------------------------------
@@ -1839,13 +1914,25 @@ def build_check_rows(
                     "Source row": "",
                 })
 
-    if fx.used_fallback_yearly:
+    if fx.missing_daily:
         rows.append({
             "Severity": "ERROR",
-            "Category": "fx_daily_fallback_yearly",
+            "Category": "missing_fx_daily",
             "Detail": (
-                "FX_DAILY_CNB used yearly fallback on "
-                f"{len(sorted(set(fx.used_fallback_yearly)))} dates."
+                "Trusted calculation encountered unresolved FX_DAILY_CNB dates: "
+                f"{len(sorted(set(fx.missing_daily)))}"
+            ),
+            "Source file": "",
+            "Source row": "",
+        })
+
+    if fx.missing_yearly:
+        rows.append({
+            "Severity": "ERROR",
+            "Category": "missing_fx_yearly",
+            "Detail": (
+                "Trusted calculation encountered unresolved yearly FX for "
+                f"{len(sorted(set(fx.missing_yearly)))} tax year(s)."
             ),
             "Source file": "",
             "Source row": "",
@@ -1977,7 +2064,27 @@ def calculate_workbook_data(
     frozen_inventory = load_frozen_inventory(user_state)
     frozen_matching = load_frozen_matching(user_state)
     frozen_snapshots = load_frozen_snapshots(user_state)
-    review_state = load_review_state(user_state)
+    legacy_review_state = load_review_state(user_state)
+    canonical_ui_state, adopted_review_count, review_conflict_count = (
+        ui_state.load_with_legacy_review_fallback(out_path, legacy_review_state)
+    )
+    if review_conflict_count:
+        print(
+            (
+                "WARN: ignoring legacy workbook Review_State for "
+                f"{review_conflict_count} sell(s) because .ui_state.json is canonical."
+            ),
+            file=sys.stderr,
+        )
+    if adopted_review_count:
+        print(
+            (
+                "INFO: migrated legacy workbook Review_State into .ui_state.json for "
+                f"{adopted_review_count} sell(s)."
+            ),
+            file=sys.stderr,
+        )
+    review_state = ui_state.export_review_state(canonical_ui_state)
     filed_reconciliation = load_filed_reconciliation(user_state)
     instrument_ids = sorted({t.instrument_id for t in txs})
     method_selection = build_method_selection(user_state, years, instrument_ids)
@@ -1995,30 +2102,42 @@ def calculate_workbook_data(
             )
             fx = FXResolver(fx_yearly, fx_daily, settings)
 
-    lots_final, match_lines, sim_warnings, year_end_inventory = simulate(
-        txs,
-        settings,
-        method_selection,
-        locked_years,
-        corporate_actions,
-        frozen_inventory,
-        frozen_matching,
-        frozen_snapshots,
-        fx,
-    )
+    fx_problems = collect_required_fx_problems(txs, settings, fx)
+    problems.extend(fx_problems)
+    calculation_blocked = bool(fx_problems)
 
-    yearly_summary = build_yearly_summary(match_lines, settings)
-    method_comparison = run_method_comparison(
-        txs,
-        settings,
-        method_selection,
-        locked_years,
-        corporate_actions,
-        frozen_inventory,
-        frozen_matching,
-        frozen_snapshots,
-        fx,
-    )
+    if calculation_blocked:
+        lots_final = []
+        match_lines = []
+        sim_warnings = []
+        year_end_inventory = {}
+        yearly_summary = []
+        method_comparison = []
+    else:
+        lots_final, match_lines, sim_warnings, year_end_inventory = simulate(
+            txs,
+            settings,
+            method_selection,
+            locked_years,
+            corporate_actions,
+            frozen_inventory,
+            frozen_matching,
+            frozen_snapshots,
+            fx,
+        )
+
+        yearly_summary = build_yearly_summary(match_lines, settings)
+        method_comparison = run_method_comparison(
+            txs,
+            settings,
+            method_selection,
+            locked_years,
+            corporate_actions,
+            frozen_inventory,
+            frozen_matching,
+            frozen_snapshots,
+            fx,
+        )
     split_warnings = split_audit(txs)
 
     return CalculationResult(
@@ -2053,6 +2172,7 @@ def calculate_workbook_data(
         yearly_summary=yearly_summary,
         method_comparison=method_comparison,
         split_warnings=split_warnings,
+        calculation_blocked=calculation_blocked,
     )
 
 
@@ -2061,6 +2181,11 @@ def write_calculation_result(
     *,
     backup_existing: bool = False,
 ) -> Path:
+    if result.calculation_blocked:
+        raise RuntimeError(
+            "Cannot write workbook because required FX rates are missing. "
+            "Fix the FX data and rerun; no fallback yearly or 22.0 rate was used."
+        )
     out_path = result.output_path
     temp_out_path = _tmp_output_path(out_path)
     if temp_out_path.exists():
@@ -2575,7 +2700,7 @@ def _write_fx_yearly(wb: Workbook, fx_yearly: Dict[int, float],
     all_years = sorted(set(list(fx_yearly.keys()) + years))
     for i, y in enumerate(all_years, start=4):
         ws.cell(row=i, column=1, value=y)
-        ws.cell(row=i, column=2, value=fx_yearly.get(y, DEFAULT_FX_YEARLY.get(y, 22.0)))
+        ws.cell(row=i, column=2, value=fx_yearly.get(y, DEFAULT_FX_YEARLY.get(y)))
         ws.cell(row=i, column=2).number_format = "0.0000"
         ws.cell(row=i, column=2).fill = EDITABLE_FILL
         source_label = src.get(y, "")
@@ -3089,7 +3214,7 @@ def _write_sell_review(
         taxable_gain = sum(m.taxable_gain_czk for m in group if m.taxable)
         methods = sorted(set(m.method for m in group))
         mixed = len({bool(m.time_test_exempt) for m in group}) > 1
-        state = review_state.get(sell_id, {})
+        state = review_state.get(ui_state.canonical_sell_id(sell_id), {})
         header_vals = [
             "SELL", g0.tax_year, g0.instrument_id, sell_id, g0.sell_date,
             g0.sell_source_broker, g0.sell_source_file, g0.sell_source_row,
@@ -3324,9 +3449,15 @@ def _write_review_state(
     ws = wb.create_sheet("Review_State")
     headers = ["Sell_ID", "Review status", "Operator note"]
     write_header(ws, headers)
-    sell_ids = sorted({m.sell_tx_id for m in match_lines} | set(review_state.keys()))
+    sell_id_map = {
+        ui_state.canonical_sell_id(m.sell_tx_id): m.sell_tx_id
+        for m in match_lines
+    }
+    sell_ids = sorted(
+        set(sell_id_map.values()) | {sell_id_map.get(sid, sid) for sid in review_state.keys()}
+    )
     for i, sid in enumerate(sell_ids, start=2):
-        state = review_state.get(sid, {})
+        state = review_state.get(ui_state.canonical_sell_id(sid), {})
         ws.cell(row=i, column=1, value=sid)
         ws.cell(row=i, column=2, value=state.get("review_status", ""))
         ws.cell(row=i, column=3, value=state.get("operator_note", ""))

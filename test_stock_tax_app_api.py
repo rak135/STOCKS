@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import json
 import shutil
+from datetime import date
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 import pytest
 
 import build_stock_tax_workbook as workbook_module
 from stock_tax_app.backend.main import create_app
 from stock_tax_app.engine import policy
 from stock_tax_app.engine import core as engine_core
+from stock_tax_app.engine import ui_state as ui_state_module
 from stock_tax_app.engine.core import run
 
 
@@ -22,6 +26,85 @@ def _copy_project_fixture(tmp_path: Path) -> Path:
     shutil.copytree(ROOT / ".csv", project / ".csv")
     shutil.copy2(ROOT / "stock_tax_system.xlsx", project / "stock_tax_system.xlsx")
     return project
+
+
+def _find_workbook_review_state_row(project: Path, canonical_sell_id: str) -> int | None:
+    wb = load_workbook(project / "stock_tax_system.xlsx")
+    ws = wb["Review_State"]
+    for row in range(2, ws.max_row + 1):
+        sell_id = ws.cell(row=row, column=1).value
+        if ui_state_module.canonical_sell_id(sell_id) == canonical_sell_id:
+            return row
+    return None
+
+
+def _first_workbook_review_sell_id(project: Path) -> tuple[str, str]:
+    wb = load_workbook(project / "stock_tax_system.xlsx")
+    ws = wb["Review_State"]
+    raw_sell_id = str(ws.cell(row=2, column=1).value)
+    return raw_sell_id, ui_state_module.canonical_sell_id(raw_sell_id)
+
+
+def _write_workbook_review_state(
+    project: Path,
+    canonical_sell_id: str,
+    *,
+    review_status: str,
+    note: str,
+) -> str:
+    workbook_path = project / "stock_tax_system.xlsx"
+    wb = load_workbook(workbook_path)
+    ws = wb["Review_State"]
+    row = None
+    raw_sell_id = None
+    for idx in range(2, ws.max_row + 1):
+        candidate = ws.cell(row=idx, column=1).value
+        if ui_state_module.canonical_sell_id(candidate) == canonical_sell_id:
+            row = idx
+            raw_sell_id = str(candidate)
+            break
+    if row is None:
+        row = ws.max_row + 1
+        raw_sell_id = canonical_sell_id
+    ws.cell(row=row, column=1, value=raw_sell_id)
+    ws.cell(row=row, column=2, value=review_status)
+    ws.cell(row=row, column=3, value=note)
+    wb.save(workbook_path)
+    return raw_sell_id
+
+
+def _set_year_fx_method(project: Path, year: int, method: str) -> None:
+    workbook_path = project / "stock_tax_system.xlsx"
+    wb = load_workbook(workbook_path)
+    ws = wb["Settings"]
+    for row in range(2, ws.max_row + 1):
+        if ws.cell(row=row, column=1).value == year:
+            ws.cell(row=row, column=3, value=method)
+            wb.save(workbook_path)
+            return
+    raise AssertionError(f"Year {year} not found in Settings")
+
+
+def _clear_fx_daily_rows(project: Path) -> None:
+    workbook_path = project / "stock_tax_system.xlsx"
+    wb = load_workbook(workbook_path)
+    ws = wb["FX_Daily"]
+    for row in range(4, ws.max_row + 1):
+        for col in range(1, 4):
+            ws.cell(row=row, column=col, value=None)
+    wb.save(workbook_path)
+
+
+def _remove_fx_yearly_row(project: Path, year: int) -> None:
+    workbook_path = project / "stock_tax_system.xlsx"
+    wb = load_workbook(workbook_path)
+    ws = wb["FX_Yearly"]
+    for row in range(4, ws.max_row + 1):
+        if ws.cell(row=row, column=1).value == year:
+            for col in range(1, 4):
+                ws.cell(row=row, column=col, value=None)
+            break
+    wb.save(workbook_path)
 
 
 def test_engine_run_returns_engine_result(tmp_path):
@@ -184,6 +267,208 @@ def test_patch_sale_review_updates_ui_state_only(tmp_path):
     assert detail_before["total_gain_loss_czk"] == detail_after["total_gain_loss_czk"]
     assert detail_before["total_cost_basis_czk"] == detail_after["total_cost_basis_czk"]
     assert years_before == years_after
+
+
+def test_sale_review_patch_survives_recalc_and_runtime_reload(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    client = TestClient(create_app(project_dir=project))
+
+    sell_id = client.get("/api/sales").json()[0]["id"]
+    patched = client.patch(
+        f"/api/sales/{sell_id}/review",
+        json={"review_status": "flagged", "note": "Needs follow-up"},
+    )
+    assert patched.status_code == 200
+
+    recalculated = client.app.state.runtime.calculate(write_workbook=False)
+    sale_after_recalc = next(sale for sale in recalculated.sales if sale.id == sell_id)
+    assert sale_after_recalc.review_status == "flagged"
+    assert sale_after_recalc.note == "Needs follow-up"
+
+    detail_after_recalc = client.get(f"/api/sales/{sell_id}").json()
+    assert detail_after_recalc["review_status"] == "flagged"
+    assert detail_after_recalc["note"] == "Needs follow-up"
+
+    reloaded_client = TestClient(create_app(project_dir=project))
+    detail_after_reload = reloaded_client.get(f"/api/sales/{sell_id}").json()
+    assert detail_after_reload["review_status"] == "flagged"
+    assert detail_after_reload["note"] == "Needs follow-up"
+
+
+def test_ui_state_beats_conflicting_workbook_review_state(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    client = TestClient(create_app(project_dir=project))
+
+    sell_id = client.get("/api/sales").json()[0]["id"]
+    raw_sell_id = _write_workbook_review_state(
+        project,
+        sell_id,
+        review_status="flagged",
+        note="Workbook conflict",
+    )
+
+    state = ui_state_module.UIState()
+    state.set_review(sell_id, review_status="reviewed", note="UI is canonical")
+    ui_state_module.save(project / "stock_tax_system.xlsx", state)
+
+    reloaded_client = TestClient(create_app(project_dir=project))
+    detail = reloaded_client.get(f"/api/sales/{sell_id}").json()
+    assert detail["review_status"] == "reviewed"
+    assert detail["note"] == "UI is canonical"
+
+    workbook_result = workbook_module.calculate_workbook_data(
+        inputs=sorted((project / ".csv").glob("*.csv")),
+        out_path=project / "stock_tax_system.xlsx",
+        fetch_missing_fx=False,
+    )
+    assert workbook_result.review_state[sell_id]["review_status"] == "reviewed"
+    assert workbook_result.review_state[sell_id]["operator_note"] == "UI is canonical"
+
+    ui_payload = json.loads((project / ".ui_state.json").read_text(encoding="utf-8"))
+    assert sell_id in ui_payload["sells"]
+    assert raw_sell_id not in ui_payload["sells"]
+
+
+def test_workbook_export_reflects_backend_ui_state(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    client = TestClient(create_app(project_dir=project))
+
+    sell_id = client.get("/api/sales").json()[0]["id"]
+    patched = client.patch(
+        f"/api/sales/{sell_id}/review",
+        json={"review_status": "reviewed", "note": "Export me"},
+    )
+    assert patched.status_code == 200
+
+    result = client.app.state.runtime.calculate(write_workbook=True)
+    sale_after_write = next(sale for sale in result.sales if sale.id == sell_id)
+    assert sale_after_write.review_status == "reviewed"
+    assert sale_after_write.note == "Export me"
+
+    row = _find_workbook_review_state_row(project, sell_id)
+    assert row is not None
+
+    wb = load_workbook(project / "stock_tax_system.xlsx")
+    ws = wb["Review_State"]
+    assert ws.cell(row=row, column=2).value == "reviewed"
+    assert ws.cell(row=row, column=3).value == "Export me"
+
+
+def test_legacy_workbook_review_state_migrates_when_ui_state_missing(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    raw_existing_sell_id, sell_id = _first_workbook_review_sell_id(project)
+    raw_sell_id = _write_workbook_review_state(
+        project,
+        sell_id,
+        review_status="flagged",
+        note="Migrated from workbook",
+    )
+    assert raw_sell_id == raw_existing_sell_id
+    ui_state_path = project / ".ui_state.json"
+    assert not ui_state_path.exists()
+
+    reloaded_client = TestClient(create_app(project_dir=project))
+    detail = reloaded_client.get(f"/api/sales/{sell_id}").json()
+    assert detail["review_status"] == "flagged"
+    assert detail["note"] == "Migrated from workbook"
+
+    assert ui_state_path.exists()
+    payload = json.loads(ui_state_path.read_text(encoding="utf-8"))
+    assert payload["sells"][sell_id]["review_status"] == "flagged"
+    assert payload["sells"][sell_id]["note"] == "Migrated from workbook"
+    assert raw_sell_id not in payload["sells"]
+
+
+def test_fx_resolver_missing_daily_rate_is_explicit_not_22():
+    resolver = workbook_module.FXResolver(
+        yearly={2020: 23.14},
+        daily={},
+        settings={2020: {"fx_method": "FX_DAILY_CNB"}},
+    )
+
+    rate, label = resolver.inspect_date(date(2020, 2, 5))
+    assert rate is None
+    assert label == "FX_DAILY_CNB_missing"
+
+    with pytest.raises(ValueError, match="Missing FX_DAILY_CNB rate"):
+        resolver.rate_for(date(2020, 2, 5))
+
+
+def test_fx_resolver_complete_fx_still_works():
+    resolver = workbook_module.FXResolver(
+        yearly={2021: 21.68},
+        daily={date(2020, 2, 4): 22.5},
+        settings={
+            2020: {"fx_method": "FX_DAILY_CNB"},
+            2021: {"fx_method": "FX_UNIFIED_GFR"},
+        },
+    )
+
+    assert resolver.rate_for(date(2020, 2, 5)) == (22.5, "FX_DAILY_CNB_back1d")
+    assert resolver.rate_for(date(2021, 3, 1)) == (21.68, "FX_UNIFIED_GFR")
+
+
+def test_api_status_exposes_missing_fx_and_blocks_calculation(tmp_path, monkeypatch):
+    project = _copy_project_fixture(tmp_path)
+    _set_year_fx_method(project, 2020, "FX_DAILY_CNB")
+    _clear_fx_daily_rows(project)
+    monkeypatch.setattr(
+        workbook_module,
+        "download_cnb_daily_rates_year",
+        lambda year, timeout=15: {},
+    )
+
+    client = TestClient(create_app(project_dir=project))
+
+    status = client.get("/api/status")
+    assert status.status_code == 200
+    body = status.json()
+    assert body["global_status"] == "blocked"
+    assert body["next_action"] is not None
+    assert body["next_action"]["href"] in engine_core.FRONTEND_READY_HREFS
+    assert any("FX_DAILY_CNB" in check["message"] for check in body["unresolved_checks"])
+    assert all(check["href"] in engine_core.FRONTEND_READY_HREFS for check in body["unresolved_checks"])
+
+    sales = client.get("/api/sales")
+    assert sales.status_code == 200
+    assert sales.json() == []
+
+    years = client.get("/api/years")
+    assert years.status_code == 200
+    assert years.json() == []
+
+    fx = client.get("/api/fx")
+    assert fx.status_code == 200
+    fx_2020 = next(row for row in fx.json() if row["year"] == 2020)
+    assert fx_2020["missing_dates"]
+
+
+def test_blocked_fx_run_skips_workbook_write_and_write_path_fails_cleanly(tmp_path, monkeypatch):
+    project = _copy_project_fixture(tmp_path)
+    _set_year_fx_method(project, 2020, "FX_DAILY_CNB")
+    _clear_fx_daily_rows(project)
+    monkeypatch.setattr(
+        workbook_module,
+        "download_cnb_daily_rates_year",
+        lambda year, timeout=15: {},
+    )
+
+    workbook_path = project / "stock_tax_system.xlsx"
+    before_mtime = workbook_path.stat().st_mtime_ns
+
+    client = TestClient(create_app(project_dir=project))
+    result = client.app.state.runtime.calculate(write_workbook=True)
+    assert result.app_status.global_status == "blocked"
+    assert workbook_path.stat().st_mtime_ns == before_mtime
+
+    calc = workbook_module.calculate_workbook_data(
+        inputs=sorted((project / ".csv").glob("*.csv")),
+        out_path=workbook_path,
+        fetch_missing_fx=False,
+    )
+    assert calc.calculation_blocked is True
+    with pytest.raises(RuntimeError, match="required FX rates are missing"):
+        workbook_module.write_calculation_result(calc)
 
 
 def test_api_rejects_2024_method_change(tmp_path):

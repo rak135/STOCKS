@@ -17,10 +17,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from . import policy
 
@@ -52,7 +53,7 @@ class UIState:
     # ---- queries ---------------------------------------------------
 
     def review_for(self, sell_id: str) -> SellReview:
-        return self.sells.get(sell_id, SellReview())
+        return self.sells.get(canonical_sell_id(sell_id), SellReview())
 
     def reconciliation_for(self, year: int) -> YearReconciliationNote:
         return self.years.get(year, YearReconciliationNote())
@@ -70,13 +71,75 @@ class UIState:
             violation = policy.check_review_status(review_status)
             if violation is not None:
                 raise ValueError(violation.message)
-        current = self.sells.get(sell_id, SellReview())
+        canonical_sell = canonical_sell_id(sell_id)
+        current = self.sells.get(canonical_sell, SellReview())
         updated = SellReview(
             review_status=review_status if review_status is not None else current.review_status,
             note=note if note is not None else current.note,
         )
-        self.sells[sell_id] = updated
+        self.sells[canonical_sell] = updated
         return updated
+
+
+def canonical_sell_id(sell_id: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]", "_", str(sell_id or ""))
+
+
+def _normalized_sell_review(review_status: Any, note: Any) -> SellReview:
+    resolved_status = str(review_status or "unreviewed").strip() or "unreviewed"
+    violation = policy.check_review_status(resolved_status)
+    if violation is not None:
+        resolved_status = "unreviewed"
+    return SellReview(
+        review_status=resolved_status,
+        note=str(note or ""),
+    )
+
+
+def export_review_state(state: UIState) -> Dict[str, Dict[str, str]]:
+    return {
+        canonical_sell_id(sell_id): {
+            "review_status": review.review_status,
+            "operator_note": review.note,
+        }
+        for sell_id, review in state.sells.items()
+    }
+
+
+def load_with_legacy_review_fallback(
+    workbook_path: Path,
+    legacy_review_state: Dict[str, Dict[str, Any]] | None = None,
+) -> tuple[UIState, int, int]:
+    """Load canonical UI state and optionally adopt legacy workbook reviews.
+
+    `.ui_state.json` is canonical. Workbook `Review_State` is consulted only
+    for sell IDs that do not already exist in the backend-owned UI state.
+    Conflicting workbook values are ignored.
+    """
+    state = load(workbook_path)
+    adopted = 0
+    conflicts = 0
+    dirty = False
+    for sell_id, legacy in (legacy_review_state or {}).items():
+        canonical_sell = canonical_sell_id(sell_id)
+        legacy_review = _normalized_sell_review(
+            legacy.get("review_status"),
+            legacy.get("operator_note"),
+        )
+        current = state.sells.get(canonical_sell)
+        if current is None:
+            state.sells[canonical_sell] = legacy_review
+            adopted += 1
+            dirty = True
+            continue
+        if (
+            current.review_status != legacy_review.review_status
+            or current.note != legacy_review.note
+        ):
+            conflicts += 1
+    if dirty:
+        save(workbook_path, state)
+    return state, adopted, conflicts
 
 
 # ---------------------------------------------------------------------
@@ -99,9 +162,9 @@ def load(workbook_path: Path) -> UIState:
         return UIState()
 
     sells = {
-        sid: SellReview(
-            review_status=str(obj.get("review_status") or "unreviewed"),
-            note=str(obj.get("note") or ""),
+        canonical_sell_id(sid): _normalized_sell_review(
+            obj.get("review_status"),
+            obj.get("note"),
         )
         for sid, obj in (raw.get("sells") or {}).items()
     }
@@ -130,7 +193,7 @@ def save(workbook_path: Path, state: UIState) -> None:
     payload = {
         "schema_version": _SCHEMA_VERSION,
         "sells": {
-            sid: {"review_status": r.review_status, "note": r.note}
+            canonical_sell_id(sid): {"review_status": r.review_status, "note": r.note}
             for sid, r in state.sells.items()
         },
         "years": {

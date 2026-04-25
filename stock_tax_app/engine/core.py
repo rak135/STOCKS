@@ -4,8 +4,6 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
-import re
-
 import build_stock_tax_workbook as workbook
 
 from . import policy, ui_state
@@ -53,7 +51,7 @@ def _discover_csv_inputs(csv_dir: Path) -> list[Path]:
 
 
 def _safe_sell_id(raw_id: str) -> str:
-    return re.sub(r"[^A-Za-z0-9._-]", "_", raw_id)
+    return ui_state.canonical_sell_id(raw_id)
 
 
 def _check_level(severity: str) -> str:
@@ -412,7 +410,10 @@ def _build_fx_years(calc: workbook.CalculationResult) -> list[FxYear]:
     years: list[FxYear] = []
     for year in sorted(calc.years):
         method = str(calc.settings.get(year, {}).get("fx_method") or workbook.DEFAULT_FX_METHOD)
-        missing_dates = sorted(d for d in tx_dates_by_year.get(year, set()) if d not in calc.fx_daily)
+        missing_dates = sorted(
+            d for d in tx_dates_by_year.get(year, set())
+            if calc.fx.inspect_date(d)[0] is None
+        )
         source_label = calc.fx_yearly_sources.get(year, "default")
         years.append(
             FxYear(
@@ -511,15 +512,20 @@ def run(
         out_path=output,
         fetch_missing_fx=True,
     )
-    if write_workbook:
+    if write_workbook and not calc.calculation_blocked:
         workbook.write_calculation_result(calc, backup_existing=False)
 
     state = ui_state.load(output)
     checks = _build_checks(calc)
     unresolved_checks = [check for check in checks if check.level != "info"]
-    sales = _build_sales(calc, state)
-    tax_years = _build_tax_years(calc, state)
-    open_positions = _build_open_positions(calc)
+    if calc.calculation_blocked:
+        sales = []
+        tax_years = []
+        open_positions = []
+    else:
+        sales = _build_sales(calc, state)
+        tax_years = _build_tax_years(calc, state)
+        open_positions = _build_open_positions(calc)
     fx_years = _build_fx_years(calc)
     settings = _build_settings(project_path, csv_path, output)
     audit_summary = _build_audit_summary(calc, tax_years)
