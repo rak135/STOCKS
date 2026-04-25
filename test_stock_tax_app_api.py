@@ -697,7 +697,28 @@ def test_workbook_export_reflects_backend_ui_state(tmp_path):
     assert ws.cell(row=row, column=3).value == "Export me"
 
 
-def test_legacy_workbook_review_state_migrates_when_ui_state_missing(tmp_path):
+def test_runtime_ignores_legacy_workbook_review_state_when_ui_state_missing(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    raw_existing_sell_id, sell_id = _first_workbook_review_sell_id(project)
+    raw_sell_id = _write_workbook_review_state(
+        project,
+        sell_id,
+        review_status="flagged",
+        note="Legacy workbook should be ignored",
+    )
+    assert raw_sell_id == raw_existing_sell_id
+    ui_state_path = project / ".ui_state.json"
+    assert not ui_state_path.exists()
+
+    reloaded_client = TestClient(create_app(project_dir=project))
+    detail = reloaded_client.get(f"/api/sales/{sell_id}").json()
+    assert detail["review_status"] == "unreviewed"
+    assert detail["note"] == ""
+
+    assert not ui_state_path.exists()
+
+
+def test_explicit_workbook_review_state_adoption_migrates_when_ui_state_missing(tmp_path):
     project = _copy_project_fixture(tmp_path)
     raw_existing_sell_id, sell_id = _first_workbook_review_sell_id(project)
     raw_sell_id = _write_workbook_review_state(
@@ -710,16 +731,64 @@ def test_legacy_workbook_review_state_migrates_when_ui_state_missing(tmp_path):
     ui_state_path = project / ".ui_state.json"
     assert not ui_state_path.exists()
 
-    reloaded_client = TestClient(create_app(project_dir=project))
-    detail = reloaded_client.get(f"/api/sales/{sell_id}").json()
-    assert detail["review_status"] == "flagged"
-    assert detail["note"] == "Migrated from workbook"
+    summary = workbook_module.adopt_legacy_workbook_review_state(
+        project,
+        _workbook_path(project),
+    )
+    assert summary["legacy_rows"] >= 1
+    assert summary["adopted"] >= 1
+    assert summary["overwritten"] == 0
 
     assert ui_state_path.exists()
     payload = json.loads(ui_state_path.read_text(encoding="utf-8"))
     assert payload["sells"][sell_id]["review_status"] == "flagged"
     assert payload["sells"][sell_id]["note"] == "Migrated from workbook"
     assert raw_sell_id not in payload["sells"]
+
+    reloaded_client = TestClient(create_app(project_dir=project))
+    detail = reloaded_client.get(f"/api/sales/{sell_id}").json()
+    assert detail["review_status"] == "flagged"
+    assert detail["note"] == "Migrated from workbook"
+
+
+def test_explicit_workbook_review_state_adoption_overwrite_behavior(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    client = TestClient(create_app(project_dir=project))
+    sell_id = _items(client.get("/api/sales").json())[0]["id"]
+
+    _write_workbook_review_state(
+        project,
+        sell_id,
+        review_status="flagged",
+        note="Workbook override",
+    )
+
+    root_state = ui_state_module.UIState()
+    root_state.set_review(sell_id, review_status="reviewed", note="Root canonical")
+    ui_state_module.save(project, root_state)
+
+    summary_no_overwrite = workbook_module.adopt_legacy_workbook_review_state(
+        project,
+        _workbook_path(project),
+        overwrite=False,
+    )
+    assert summary_no_overwrite["overwritten"] == 0
+    assert summary_no_overwrite["skipped_conflicts"] >= 1
+
+    no_overwrite_detail = TestClient(create_app(project_dir=project)).get(f"/api/sales/{sell_id}").json()
+    assert no_overwrite_detail["review_status"] == "reviewed"
+    assert no_overwrite_detail["note"] == "Root canonical"
+
+    summary_overwrite = workbook_module.adopt_legacy_workbook_review_state(
+        project,
+        _workbook_path(project),
+        overwrite=True,
+    )
+    assert summary_overwrite["overwritten"] >= 1
+
+    overwritten_detail = TestClient(create_app(project_dir=project)).get(f"/api/sales/{sell_id}").json()
+    assert overwritten_detail["review_status"] == "flagged"
+    assert overwritten_detail["note"] == "Workbook override"
 
 
 def test_ui_state_stored_at_project_root_when_output_path_is_nested(tmp_path):

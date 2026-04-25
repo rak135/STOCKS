@@ -879,6 +879,29 @@ def load_review_state(user_state: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     return out
 
 
+def adopt_legacy_workbook_review_state(
+    project_dir: Path | str,
+    workbook_path: Path | str,
+    *,
+    overwrite: bool = False,
+) -> Dict[str, int]:
+    """Explicitly migrate workbook ``Review_State`` rows into ``.ui_state.json``."""
+    workbook = Path(workbook_path)
+    legacy_user_state = load_existing_user_state(workbook)
+    legacy_review_state = load_review_state(legacy_user_state)
+    _, summary = ui_state.adopt_legacy_workbook_review_state(
+        project_dir,
+        legacy_review_state,
+        overwrite=overwrite,
+    )
+    return {
+        "legacy_rows": len(legacy_review_state),
+        "adopted": summary["adopted"],
+        "overwritten": summary["overwritten"],
+        "skipped_conflicts": summary["skipped_conflicts"],
+    }
+
+
 def load_filed_reconciliation(user_state: Dict[str, Any]
                               ) -> Dict[int, Dict[str, Any]]:
     """Return {year: {filed_method, filed_tax_base, filed_tax_due}} from Filed_Year_Reconciliation."""
@@ -1276,30 +1299,7 @@ def calculate_workbook_data(
     frozen_inventory = load_frozen_inventory(user_state)
     frozen_matching = load_frozen_matching(user_state)
     frozen_snapshots = load_frozen_snapshots(user_state)
-    legacy_review_state = load_review_state(user_state)
-    canonical_ui_state, adopted_review_count, review_conflict_count = (
-        ui_state.load_with_legacy_review_fallback(
-            project_root,
-            legacy_workbook_path=out_path,
-            legacy_review_state=legacy_review_state,
-        )
-    )
-    if review_conflict_count:
-        print(
-            (
-                "WARN: ignoring legacy workbook Review_State for "
-                f"{review_conflict_count} sell(s) because .ui_state.json is canonical."
-            ),
-            file=sys.stderr,
-        )
-    if adopted_review_count:
-        print(
-            (
-                "INFO: migrated legacy workbook Review_State into .ui_state.json for "
-                f"{adopted_review_count} sell(s)."
-            ),
-            file=sys.stderr,
-        )
+    canonical_ui_state = ui_state.load(project_root, legacy_workbook_path=out_path)
     review_state = ui_state.export_review_state(canonical_ui_state)
     filed_reconciliation = load_filed_reconciliation(user_state)
     instrument_ids = sorted({t.instrument_id for t in txs})

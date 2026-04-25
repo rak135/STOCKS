@@ -110,22 +110,23 @@ def export_review_state(state: UIState) -> Dict[str, Dict[str, str]]:
     }
 
 
-def load_with_legacy_review_fallback(
-    project_dir: Path,
+def adopt_legacy_workbook_review_state(
+    project_dir: Path | str,
+    legacy_review_state: Dict[str, Dict[str, Any]] | None,
     *,
-    legacy_workbook_path: Path | None = None,
-    legacy_review_state: Dict[str, Dict[str, Any]] | None = None,
-) -> tuple[UIState, int, int]:
-    """Load canonical UI state and optionally adopt legacy workbook reviews.
+    overwrite: bool = False,
+) -> tuple[UIState, Dict[str, int]]:
+    """Explicitly merge legacy workbook ``Review_State`` into project UI state.
 
-    `.ui_state.json` is canonical. Workbook `Review_State` is consulted only
-    for sell IDs that do not already exist in the backend-owned UI state.
-    Conflicting workbook values are ignored.
+    This helper is intentionally explicit and never used as an automatic runtime
+    fallback. Canonical ``.ui_state.json`` stays authoritative.
     """
-    state = load(project_dir, legacy_workbook_path=legacy_workbook_path)
+    state = load(project_dir)
     adopted = 0
-    conflicts = 0
+    overwritten = 0
+    skipped_conflicts = 0
     dirty = False
+
     for sell_id, legacy in (legacy_review_state or {}).items():
         canonical_sell = canonical_sell_id(sell_id)
         legacy_review = _normalized_sell_review(
@@ -133,19 +134,37 @@ def load_with_legacy_review_fallback(
             legacy.get("operator_note"),
         )
         current = state.sells.get(canonical_sell)
+
         if current is None:
             state.sells[canonical_sell] = legacy_review
             adopted += 1
             dirty = True
             continue
-        if (
+
+        differs = (
             current.review_status != legacy_review.review_status
             or current.note != legacy_review.note
-        ):
-            conflicts += 1
+        )
+        if not differs:
+            continue
+
+        if overwrite:
+            state.sells[canonical_sell] = legacy_review
+            overwritten += 1
+            dirty = True
+            continue
+
+        skipped_conflicts += 1
+
     if dirty:
         save(project_dir, state)
-    return state, adopted, conflicts
+
+    summary = {
+        "adopted": adopted,
+        "overwritten": overwritten,
+        "skipped_conflicts": skipped_conflicts,
+    }
+    return state, summary
 
 
 # ---------------------------------------------------------------------
