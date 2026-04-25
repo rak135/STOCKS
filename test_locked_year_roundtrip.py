@@ -22,7 +22,6 @@ def make_sandbox() -> tuple[tempfile.TemporaryDirectory[str], Path, list[str]]:
     tmpdir = tempfile.TemporaryDirectory(prefix="locked_year_roundtrip_")
     sandbox = Path(tmpdir.name)
     shutil.copytree(ROOT / ".csv", sandbox / ".csv")
-    shutil.copy2(ROOT / "stock_tax_system.xlsx", sandbox / "stock_tax_system.xlsx")
     workbook_path = sandbox / "stock_tax_system.xlsx"
     inputs = [
         str(sandbox / ".csv" / name)

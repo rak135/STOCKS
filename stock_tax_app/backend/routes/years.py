@@ -5,14 +5,12 @@ import math
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Request
 
+from stock_tax_app.engine.fx import SUPPORTED_FX_METHODS
 from stock_tax_app.engine import policy
 from stock_tax_app.engine.models import TaxYear, TaxYearList
 from stock_tax_app.state import project_store
 
 router = APIRouter()
-
-
-SUPPORTED_FX_METHODS = ("FX_UNIFIED_GFR", "FX_DAILY_CNB")
 
 
 class YearPatchRequest(BaseModel):

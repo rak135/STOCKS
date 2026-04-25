@@ -30,12 +30,58 @@ def _copy_project_fixture(tmp_path: Path) -> Path:
     project = tmp_path / "project"
     project.mkdir()
     shutil.copytree(ROOT / ".csv", project / ".csv")
-    shutil.copy2(ROOT / "stock_tax_system.xlsx", project / "stock_tax_system.xlsx")
     return project
 
 
+def _workbook_path(project: Path) -> Path:
+    return project / workbook_module.CANONICAL_OUTPUT_NAME
+
+
+def _ensure_test_workbook(project: Path) -> Path:
+    workbook_path = _workbook_path(project)
+    if workbook_path.exists():
+        return workbook_path
+
+    calc = workbook_module.calculate_workbook_data(
+        inputs=sorted((project / ".csv").glob("*.csv")),
+        out_path=workbook_path,
+        fetch_missing_fx=False,
+    )
+    workbook_module.write_workbook(
+        calc.output_path,
+        calc.raw_rows,
+        calc.txs,
+        calc.ignored,
+        calc.problems,
+        calc.instrument_map,
+        calc.fx_yearly,
+        calc.fx_daily,
+        calc.fx_daily_sources,
+        calc.corporate_actions,
+        calc.method_selection,
+        calc.locked_years,
+        calc.settings,
+        calc.frozen_inventory,
+        calc.frozen_matching,
+        calc.frozen_snapshots,
+        calc.fx,
+        calc.lots_final,
+        calc.match_lines,
+        calc.sim_warnings,
+        calc.yearly_summary,
+        calc.method_comparison,
+        calc.split_warnings,
+        calc.year_end_inventory,
+        calc.import_log,
+        calc.review_state,
+        calc.filed_reconciliation,
+        fx_yearly_sources=calc.fx_yearly_sources,
+    )
+    return workbook_path
+
+
 def _find_workbook_review_state_row(project: Path, canonical_sell_id: str) -> int | None:
-    wb = load_workbook(project / "stock_tax_system.xlsx")
+    wb = load_workbook(_ensure_test_workbook(project))
     ws = wb["Review_State"]
     for row in range(2, ws.max_row + 1):
         sell_id = ws.cell(row=row, column=1).value
@@ -45,7 +91,7 @@ def _find_workbook_review_state_row(project: Path, canonical_sell_id: str) -> in
 
 
 def _first_workbook_review_sell_id(project: Path) -> tuple[str, str]:
-    wb = load_workbook(project / "stock_tax_system.xlsx")
+    wb = load_workbook(_ensure_test_workbook(project))
     ws = wb["Review_State"]
     raw_sell_id = str(ws.cell(row=2, column=1).value)
     return raw_sell_id, ui_state_module.canonical_sell_id(raw_sell_id)
@@ -58,7 +104,7 @@ def _write_workbook_review_state(
     review_status: str,
     note: str,
 ) -> str:
-    workbook_path = project / "stock_tax_system.xlsx"
+    workbook_path = _ensure_test_workbook(project)
     wb = load_workbook(workbook_path)
     ws = wb["Review_State"]
     row = None
@@ -80,7 +126,7 @@ def _write_workbook_review_state(
 
 
 def _set_year_fx_method(project: Path, year: int, method: str) -> None:
-    workbook_path = project / "stock_tax_system.xlsx"
+    workbook_path = _ensure_test_workbook(project)
     wb = load_workbook(workbook_path)
     ws = wb["Settings"]
     for row in range(2, ws.max_row + 1):
@@ -92,7 +138,7 @@ def _set_year_fx_method(project: Path, year: int, method: str) -> None:
 
 
 def _set_locked_year(project: Path, year: int, locked: bool) -> None:
-    workbook_path = project / "stock_tax_system.xlsx"
+    workbook_path = _ensure_test_workbook(project)
     wb = load_workbook(workbook_path)
     ws = wb["Locked_Years"]
     for row in range(4, ws.max_row + 1):
@@ -104,7 +150,7 @@ def _set_locked_year(project: Path, year: int, locked: bool) -> None:
 
 
 def _build_check_rows_for_project(project: Path) -> list[dict]:
-    workbook_path = project / "stock_tax_system.xlsx"
+    workbook_path = _ensure_test_workbook(project)
     calc = workbook_module.calculate_workbook_data(
         inputs=sorted((project / ".csv").glob("*.csv")),
         out_path=workbook_path,
@@ -130,7 +176,7 @@ def _build_check_rows_for_project(project: Path) -> list[dict]:
 
 
 def _clear_fx_daily_rows(project: Path) -> None:
-    workbook_path = project / "stock_tax_system.xlsx"
+    workbook_path = _ensure_test_workbook(project)
     wb = load_workbook(workbook_path)
     ws = wb["FX_Daily"]
     for row in range(4, ws.max_row + 1):
@@ -140,7 +186,7 @@ def _clear_fx_daily_rows(project: Path) -> None:
 
 
 def _remove_fx_yearly_row(project: Path, year: int) -> None:
-    workbook_path = project / "stock_tax_system.xlsx"
+    workbook_path = _ensure_test_workbook(project)
     wb = load_workbook(workbook_path)
     ws = wb["FX_Yearly"]
     for row in range(4, ws.max_row + 1):
@@ -152,7 +198,7 @@ def _remove_fx_yearly_row(project: Path, year: int) -> None:
 
 
 def _set_fx_yearly_row(project: Path, year: int, rate: float, source_note: str = "") -> None:
-    workbook_path = project / "stock_tax_system.xlsx"
+    workbook_path = _ensure_test_workbook(project)
     wb = load_workbook(workbook_path)
     ws = wb["FX_Yearly"]
     for row in range(4, ws.max_row + 1):
@@ -169,7 +215,7 @@ def _set_fx_yearly_row(project: Path, year: int, rate: float, source_note: str =
 
 
 def _set_fx_daily_row(project: Path, target_date: str, rate: float, source_note: str = "") -> None:
-    workbook_path = project / "stock_tax_system.xlsx"
+    workbook_path = _ensure_test_workbook(project)
     wb = load_workbook(workbook_path)
     ws = wb["FX_Daily"]
     for row in range(4, ws.max_row + 1):
@@ -197,7 +243,7 @@ def _set_instrument_map_row(
     instrument_name: str = "",
     notes: str = "",
 ) -> None:
-    workbook_path = project / "stock_tax_system.xlsx"
+    workbook_path = _ensure_test_workbook(project)
     wb = load_workbook(workbook_path)
     ws = wb["Instrument_Map"]
     for row in range(2, ws.max_row + 1):
@@ -338,6 +384,32 @@ def test_api_status_import_years_and_sales(tmp_path):
     sales = client.get("/api/sales")
     assert sales.status_code == 200
     assert len(_items(sales.json())) > 0
+
+
+def test_api_runs_without_root_workbook_and_only_exports_explicitly(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    workbook_path = _workbook_path(project)
+    assert not workbook_path.exists()
+
+    client = TestClient(create_app(project_dir=project))
+
+    status = client.get("/api/status")
+    years = client.get("/api/years")
+    sales = client.get("/api/sales")
+    recalc = client.post("/api/recalculate")
+
+    assert status.status_code == 200
+    assert years.status_code == 200
+    assert sales.status_code == 200
+    assert recalc.status_code == 200
+    assert status.json()["global_status"] in {"ready", "needs_review", "blocked"}
+    assert years.json()["truth"]["status"] in {"ready", "needs_review", "partial", "blocked"}
+    assert sales.json()["truth"]["status"] in {"ready", "needs_review", "partial", "blocked"}
+    assert not workbook_path.exists()
+
+    export_result = client.app.state.runtime.calculate(write_workbook=True)
+    assert export_result.tax_years.items
+    assert workbook_path.exists()
 
 
 def test_sales_list_includes_financial_fields_and_matches_detail(tmp_path):
@@ -1650,6 +1722,15 @@ def test_api_patch_year_updates_fx_method_for_unlocked_year(tmp_path):
 
     state = project_store.load_project_state(project)
     assert state.year_settings[2025]["fx_method"] == "FX_DAILY_CNB"
+
+
+def test_api_patch_year_rejects_invalid_fx_method(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    client = TestClient(create_app(project_dir=project))
+
+    response = client.patch("/api/years/2025", json={"fx_method": "NOT_A_FX_METHOD"})
+    assert response.status_code == 422
+    assert "Unsupported fx_method" in response.json()["detail"]
 
 
 def test_api_patch_year_rejects_invalid_method(tmp_path):

@@ -27,12 +27,58 @@ def _copy_project_fixture(tmp_path: Path) -> Path:
     project = tmp_path / "project"
     project.mkdir()
     shutil.copytree(ROOT / ".csv", project / ".csv")
-    shutil.copy2(ROOT / "stock_tax_system.xlsx", project / "stock_tax_system.xlsx")
     return project
 
 
+def _workbook_path(project: Path) -> Path:
+    return project / workbook_module.CANONICAL_OUTPUT_NAME
+
+
+def _ensure_test_workbook(project: Path) -> Path:
+    workbook_path = _workbook_path(project)
+    if workbook_path.exists():
+        return workbook_path
+
+    calc = workbook_module.calculate_workbook_data(
+        inputs=sorted((project / ".csv").glob("*.csv")),
+        out_path=workbook_path,
+        fetch_missing_fx=False,
+    )
+    workbook_module.write_workbook(
+        calc.output_path,
+        calc.raw_rows,
+        calc.txs,
+        calc.ignored,
+        calc.problems,
+        calc.instrument_map,
+        calc.fx_yearly,
+        calc.fx_daily,
+        calc.fx_daily_sources,
+        calc.corporate_actions,
+        calc.method_selection,
+        calc.locked_years,
+        calc.settings,
+        calc.frozen_inventory,
+        calc.frozen_matching,
+        calc.frozen_snapshots,
+        calc.fx,
+        calc.lots_final,
+        calc.match_lines,
+        calc.sim_warnings,
+        calc.yearly_summary,
+        calc.method_comparison,
+        calc.split_warnings,
+        calc.year_end_inventory,
+        calc.import_log,
+        calc.review_state,
+        calc.filed_reconciliation,
+        fx_yearly_sources=calc.fx_yearly_sources,
+    )
+    return workbook_path
+
+
 def _set_workbook_tax_rate(project: Path, year: int, tax_rate: float) -> None:
-    workbook_path = project / "stock_tax_system.xlsx"
+    workbook_path = _ensure_test_workbook(project)
     wb = load_workbook(workbook_path)
     ws = wb["Settings"]
     for row in range(2, ws.max_row + 1):
@@ -44,7 +90,7 @@ def _set_workbook_tax_rate(project: Path, year: int, tax_rate: float) -> None:
 
 
 def _set_workbook_method_selection(project: Path, year: int, instrument_id: str, method: str) -> None:
-    workbook_path = project / "stock_tax_system.xlsx"
+    workbook_path = _ensure_test_workbook(project)
     wb = load_workbook(workbook_path)
     ws = wb["Method_Selection"]
     for row in range(4, ws.max_row + 1):
@@ -59,7 +105,7 @@ def _set_workbook_method_selection(project: Path, year: int, instrument_id: str,
 
 
 def _set_workbook_fx_yearly(project: Path, year: int, rate: float, source_note: str = "") -> None:
-    workbook_path = project / "stock_tax_system.xlsx"
+    workbook_path = _ensure_test_workbook(project)
     wb = load_workbook(workbook_path)
     ws = wb["FX_Yearly"]
     for row in range(4, ws.max_row + 1):
@@ -76,7 +122,7 @@ def _set_workbook_fx_yearly(project: Path, year: int, rate: float, source_note: 
 
 
 def _set_workbook_fx_daily(project: Path, day: str, rate: float, source_note: str = "") -> None:
-    workbook_path = project / "stock_tax_system.xlsx"
+    workbook_path = _ensure_test_workbook(project)
     wb = load_workbook(workbook_path)
     ws = wb["FX_Daily"]
     for row in range(4, ws.max_row + 1):
@@ -104,7 +150,7 @@ def _set_workbook_instrument_map(
     instrument_name: str = "",
     notes: str = "",
 ) -> None:
-    workbook_path = project / "stock_tax_system.xlsx"
+    workbook_path = _ensure_test_workbook(project)
     wb = load_workbook(workbook_path)
     ws = wb["Instrument_Map"]
     for row in range(2, ws.max_row + 1):
@@ -125,7 +171,7 @@ def _set_workbook_instrument_map(
 
 
 def _remove_workbook_instrument_map(project: Path, symbol: str) -> None:
-    workbook_path = project / "stock_tax_system.xlsx"
+    workbook_path = _ensure_test_workbook(project)
     wb = load_workbook(workbook_path)
     ws = wb["Instrument_Map"]
     for row in range(2, ws.max_row + 1):
@@ -147,7 +193,7 @@ def _set_workbook_corporate_action(
     notes: str = "",
     applied: bool = True,
 ) -> int:
-    workbook_path = project / "stock_tax_system.xlsx"
+    workbook_path = _ensure_test_workbook(project)
     wb = load_workbook(workbook_path)
     ws = wb["Corporate_Actions"]
     target_row = None
@@ -170,7 +216,7 @@ def _set_workbook_corporate_action(
 
 
 def _read_workbook_corporate_actions(project: Path) -> list[dict[str, object]]:
-    wb = load_workbook(project / "stock_tax_system.xlsx")
+    wb = load_workbook(_ensure_test_workbook(project))
     ws = wb["Corporate_Actions"]
     rows: list[dict[str, object]] = []
     for row in range(4, ws.max_row + 1):
@@ -194,7 +240,7 @@ def _read_workbook_corporate_actions(project: Path) -> list[dict[str, object]]:
 
 
 def _find_settings_row(project: Path, year: int) -> int | None:
-    wb = load_workbook(project / "stock_tax_system.xlsx")
+    wb = load_workbook(_ensure_test_workbook(project))
     ws = wb["Settings"]
     for row in range(2, ws.max_row + 1):
         if ws.cell(row=row, column=1).value == year:
@@ -203,7 +249,7 @@ def _find_settings_row(project: Path, year: int) -> int | None:
 
 
 def _find_method_selection_row(project: Path, year: int, instrument_id: str) -> int | None:
-    wb = load_workbook(project / "stock_tax_system.xlsx")
+    wb = load_workbook(_ensure_test_workbook(project))
     ws = wb["Method_Selection"]
     for row in range(4, ws.max_row + 1):
         if (
@@ -215,7 +261,7 @@ def _find_method_selection_row(project: Path, year: int, instrument_id: str) -> 
 
 
 def _find_instrument_map_row(project: Path, symbol: str) -> int | None:
-    wb = load_workbook(project / "stock_tax_system.xlsx")
+    wb = load_workbook(_ensure_test_workbook(project))
     ws = wb["Instrument_Map"]
     for row in range(2, ws.max_row + 1):
         if ws.cell(row=row, column=1).value == symbol:

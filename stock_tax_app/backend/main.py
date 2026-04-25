@@ -36,7 +36,7 @@ def create_app(
 
     @recalc_router.post("/api/recalculate", response_model=EngineResult)
     def recalculate(request: Request) -> EngineResult:
-        return request.app.state.runtime.calculate(write_workbook=True)
+        return request.app.state.runtime.calculate(write_workbook=False)
 
     app.include_router(recalc_router)
     return app
