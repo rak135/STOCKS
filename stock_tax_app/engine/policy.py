@@ -15,6 +15,10 @@ from dataclasses import dataclass
 from typing import Dict, Set
 
 
+SUPPORTED_METHODS = ("FIFO", "LIFO", "MIN_GAIN", "MAX_GAIN")
+DEFAULT_METHOD = "FIFO"
+
+
 # ---------------------------------------------------------------------
 # Filed & locked years (hard rules, enforced server-side)
 # ---------------------------------------------------------------------
@@ -37,10 +41,13 @@ AUTO_LOCKED_YEARS: Set[int] = set(FILED_YEARS.keys())
 DEFAULT_METHOD_BY_YEAR: Dict[int, str] = {
     2020: "LIFO", 2021: "LIFO", 2022: "LIFO", 2023: "LIFO",
     2024: "LIFO",
+    2025: "FIFO",
 }
 
+YEAR_DEFAULT_METHODS = DEFAULT_METHOD_BY_YEAR
+
 #: Fallback method for years not in :data:`DEFAULT_METHOD_BY_YEAR`.
-FALLBACK_DEFAULT_METHOD = "FIFO"
+FALLBACK_DEFAULT_METHOD = DEFAULT_METHOD
 
 
 # ---------------------------------------------------------------------
@@ -61,8 +68,23 @@ def filed_method(year: int) -> str | None:
     return FILED_YEARS.get(year)
 
 
+def normalize_method(method: str | None) -> str:
+    resolved = str(method or DEFAULT_METHOD).upper()
+    if resolved not in SUPPORTED_METHODS:
+        return DEFAULT_METHOD
+    return resolved
+
+
 def default_method_for(year: int) -> str:
     return DEFAULT_METHOD_BY_YEAR.get(year, FALLBACK_DEFAULT_METHOD)
+
+
+def resolved_method_for(year: int, method: str | None = None) -> str:
+    if is_filed(year):
+        return filed_method(year) or DEFAULT_METHOD
+    if method is None or str(method).strip() == "":
+        return default_method_for(year)
+    return normalize_method(method)
 
 
 def show_method_comparison(year: int) -> bool:

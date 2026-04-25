@@ -47,6 +47,8 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
+from stock_tax_app.engine import policy
+
 
 # -----------------------------------------------------------------------
 # Constants
@@ -57,8 +59,8 @@ DEFAULT_APPLY_100K = False
 DEFAULT_100K_THRESHOLD = 100_000.0  # CZK
 DEFAULT_FX_METHOD = "FX_UNIFIED_GFR"
 SUPPORTED_FX_METHODS = ("FX_DAILY_CNB", "FX_UNIFIED_GFR")
-SUPPORTED_METHODS = ("FIFO", "LIFO", "MIN_GAIN", "MAX_GAIN")
-DEFAULT_METHOD = "FIFO"
+SUPPORTED_METHODS = policy.SUPPORTED_METHODS
+DEFAULT_METHOD = policy.DEFAULT_METHOD
 
 # GFŘ unified yearly USD/CZK rates (Czech tax authority official rates).
 # Source: GFŘ pokyn (instruction) D-series, published annually by the Czech
@@ -81,16 +83,9 @@ GFR_OFFICIAL_RATES = {
     2025: (21.84, "GFŘ-D-75"),
 }
 
-# Year-specific default matching methods.
-# 2020-2023 unfiled: default LIFO. 2024 filed LIFO. 2025+ default LIFO.
-YEAR_DEFAULT_METHODS = {
-    2020: "LIFO", 2021: "LIFO", 2022: "LIFO", 2023: "LIFO",
-    2024: "LIFO",
-}
-# Years officially filed {year: method_used}.
-FILED_YEARS = {
-    2024: "LIFO",
-}
+# Compatibility aliases derived from stock_tax_app.engine.policy.
+YEAR_DEFAULT_METHODS = policy.YEAR_DEFAULT_METHODS
+FILED_YEARS = policy.FILED_YEARS
 # CNB daily FX cache file (written next to the workbook).
 CNB_DAILY_CACHE_FILE = "cnb_daily_cache.json"
 CANONICAL_OUTPUT_NAME = "stock_tax_system.xlsx"
@@ -561,7 +556,7 @@ def build_settings(
         }
         if out[y]["fx_method"] not in SUPPORTED_FX_METHODS:
             out[y]["fx_method"] = DEFAULT_FX_METHOD
-        if y in FILED_YEARS:
+        if policy.is_locked(y):
             out[y]["locked"] = True
     return out
 
@@ -679,18 +674,10 @@ def build_method_selection(user_state: Dict[str, Any],
         except (TypeError, ValueError):
             continue
         inst = (row.get("Instrument_ID") or "").strip()
-        method = str(row.get("Method") or DEFAULT_METHOD).upper()
-        if method not in SUPPORTED_METHODS:
-            method = DEFAULT_METHOD
-        if y in FILED_YEARS:
-            method = FILED_YEARS[y]
+        method = policy.resolved_method_for(y, row.get("Method"))
         sel[(y, inst)] = method
     for y in years:
-        # Filed years must stay locked to their filed method.
-        if y in FILED_YEARS:
-            year_default = FILED_YEARS[y]
-        else:
-            year_default = YEAR_DEFAULT_METHODS.get(y, DEFAULT_METHOD)
+        year_default = policy.resolved_method_for(y)
         for inst in instrument_ids:
             sel.setdefault((y, inst), year_default)
     return sel
@@ -707,7 +694,7 @@ def build_locked_years(user_state: Dict[str, Any],
         out[y] = _to_bool(row.get("Locked?"), False)
     for y in years:
         out.setdefault(y, False)
-        if y in FILED_YEARS:
+        if policy.is_locked(y):
             out[y] = True
     return out
 
@@ -808,7 +795,8 @@ def load_filed_reconciliation(user_state: Dict[str, Any]
             or row.get("Expected filed method")
             or ""
         ).strip().upper()
-        if y in FILED_YEARS and expected_method and expected_method != FILED_YEARS[y]:
+        filed_method = policy.filed_method(y)
+        if filed_method and expected_method and expected_method != filed_method:
             # Ignore stale filed-year reconciliation rows from the earlier
             # 2024 FIFO policy; the generator now treats 2024 as filed LIFO.
             continue
@@ -1450,7 +1438,7 @@ def simulate(
             if not year_sells:
                 continue
             method = override_method if override_method is not None else (
-                method_selection.get((flush_year, inst), DEFAULT_METHOD)
+                method_selection.get((flush_year, inst), policy.default_method_for(flush_year))
             )
             avail_lots = [l for l in lots
                           if l.instrument_id == inst and l.quantity_remaining > 1e-9]
@@ -3252,8 +3240,8 @@ def _write_method_plan(
         best_method = rcmp.get("Best method", "")
         best_tax_year = float(rcmp.get("Best method tax CZK") or 0.0)
         for inst in instrument_ids:
-            sel = method_selection.get((y, inst), DEFAULT_METHOD)
-            filed = y in FILED_YEARS
+            sel = method_selection.get((y, inst), policy.default_method_for(y))
+            filed = policy.is_filed(y)
             locked = bool(settings.get(y, {}).get("locked", False))
             tax_rate = float(settings.get(y, {}).get("tax_rate", DEFAULT_TAX_RATE))
             yi_tax = max(0.0, by_yi_gain.get((y, inst), 0.0)) * tax_rate
@@ -3296,8 +3284,11 @@ def _write_filed_year_reconciliation(
     summary_by_year = {int(r.get("Tax year")): r for r in yearly_summary}
     row = 2
     for y in sorted(FILED_YEARS.keys()):
-        expected_method = FILED_YEARS[y]
-        methods = {method_selection.get((y, inst), DEFAULT_METHOD) for inst in instrument_ids}
+        expected_method = policy.filed_method(y) or policy.default_method_for(y)
+        methods = {
+            method_selection.get((y, inst), policy.default_method_for(y))
+            for inst in instrument_ids
+        }
         workbook_method = methods.pop() if len(methods) == 1 else "MIXED"
         workbook_tax = float(summary_by_year.get(y, {}).get("Tax due CZK") or 0.0)
         filed_tax = _to_float(existing.get(y, {}).get("filed_tax_due"), workbook_tax)

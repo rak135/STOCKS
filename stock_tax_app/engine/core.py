@@ -28,6 +28,16 @@ from .models import (
     TaxYear,
 )
 
+FRONTEND_READY_HREFS = frozenset({"/", "/import", "/tax-years"})
+_PLACEHOLDER_HREF_FALLBACKS = {
+    "/audit": "/",
+    "/fx": "/",
+    "/open-positions": "/",
+    "/sales-review": "/",
+    "/settings": "/",
+    "/years": "/tax-years",
+}
+
 
 def _resolve_path(project_dir: Path, value: Path | str | None, default_name: str) -> Path:
     if value is None:
@@ -55,16 +65,22 @@ def _check_level(severity: str) -> str:
     return "info"
 
 
+def _frontend_ready_href(href: str) -> str:
+    if href in FRONTEND_READY_HREFS:
+        return href
+    return _PLACEHOLDER_HREF_FALLBACKS.get(href, "/")
+
+
 def _check_href(category: str) -> str:
     if "fx" in category:
-        return "/fx"
+        return _frontend_ready_href("/fx")
     if "method" in category or "filed" in category:
-        return "/years"
+        return _frontend_ready_href("/years")
     if "remaining" in category or "position" in category:
-        return "/open-positions"
+        return _frontend_ready_href("/open-positions")
     if "import" in category:
-        return "/import"
-    return "/audit"
+        return _frontend_ready_href("/import")
+    return _frontend_ready_href("/audit")
 
 
 def _build_checks(calc: workbook.CalculationResult) -> list[Check]:
@@ -464,7 +480,10 @@ def _build_status(
     next_action = None
     if unresolved_checks:
         first = unresolved_checks[0]
-        next_action = NextAction(label="Review checks", href=first.href or "/audit")
+        next_action = NextAction(
+            label="Review checks",
+            href=_frontend_ready_href(first.href or "/"),
+        )
     return AppStatus(
         project_path=str(project_dir),
         csv_folder=str(csv_dir),
