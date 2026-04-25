@@ -22,6 +22,7 @@ _MIGRATED_DOMAINS = frozenset(
 )
 _FX_CURRENCY_PAIR = "USD/CZK"
 _SUPPORTED_CORPORATE_ACTION_TYPES = frozenset({"split", "reverse_split", "ticker_change"})
+_SUPPORTED_METHODS = frozenset({"FIFO", "LIFO", "MIN_GAIN", "MAX_GAIN"})
 
 
 class ProjectStateError(RuntimeError):
@@ -149,6 +150,294 @@ def adopt_legacy_workbook_state(
     if changed:
         save_project_state(project_dir, state)
     return state
+
+
+def adopt_legacy_workbook_method_selection(
+    project_dir: Path | str,
+    legacy_state: dict[str, Any],
+    *,
+    overwrite: bool = False,
+) -> dict[str, int]:
+    """Explicitly migrate workbook ``Method_Selection`` rows into ProjectState.
+
+    Normal runtime ignores workbook ``Method_Selection`` (P3.1). This helper is
+    the single supported path for adopting legacy per-instrument method
+    selections. It also adopts the legacy per-year default method when the
+    Settings sheet carries one and ProjectState has none.
+
+    Returns a summary dict with counts:
+
+    - ``legacy_rows`` — total Method_Selection rows seen (after dedupe by key)
+    - ``adopted`` — per-instrument rows written into ProjectState
+    - ``overwritten`` — rows that replaced an existing ProjectState entry
+    - ``skipped_conflicts`` — rows skipped because ProjectState already had a
+      value and ``overwrite=False``
+    - ``skipped_invalid`` — rows skipped because of unparseable year, missing
+      instrument, or unsupported method
+    - ``year_defaults_adopted`` — Settings.Method values written into
+      ``ProjectState.year_settings[year]['method']``
+    - ``year_defaults_overwritten`` — year defaults that replaced an existing
+      ProjectState ``year_settings[year]['method']``
+    - ``year_defaults_skipped_conflicts`` — year defaults skipped because
+      ProjectState already had one and ``overwrite=False``
+    """
+
+    state = load_project_state(project_dir)
+    summary = {
+        "legacy_rows": 0,
+        "adopted": 0,
+        "overwritten": 0,
+        "skipped_conflicts": 0,
+        "skipped_invalid": 0,
+        "year_defaults_adopted": 0,
+        "year_defaults_overwritten": 0,
+        "year_defaults_skipped_conflicts": 0,
+    }
+
+    raw_rows = legacy_state.get("Method_Selection") or []
+    valid_rows: dict[tuple[int, str], str] = {}
+    for row in raw_rows:
+        if not isinstance(row, dict):
+            summary["skipped_invalid"] += 1
+            continue
+        try:
+            year = int(row.get("Tax year"))
+        except (TypeError, ValueError):
+            summary["skipped_invalid"] += 1
+            continue
+        instrument_id = str(row.get("Instrument_ID") or "").strip()
+        method = str(row.get("Method") or "").strip().upper()
+        if not instrument_id or method not in _SUPPORTED_METHODS:
+            summary["skipped_invalid"] += 1
+            continue
+        valid_rows[(year, instrument_id)] = method
+
+    summary["legacy_rows"] = len(valid_rows)
+
+    changed = False
+    for (year, instrument_id), method in valid_rows.items():
+        current = state.method_selection.setdefault(year, {})
+        existing = current.get(instrument_id)
+        if existing is None:
+            current[instrument_id] = method
+            summary["adopted"] += 1
+            changed = True
+        elif overwrite and existing != method:
+            current[instrument_id] = method
+            summary["overwritten"] += 1
+            changed = True
+        elif not overwrite and existing != method:
+            summary["skipped_conflicts"] += 1
+
+    for row in legacy_state.get("Settings") or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            year = int(row.get("Tax year"))
+        except (TypeError, ValueError):
+            continue
+        method = str(row.get("Method") or "").strip().upper()
+        if method not in _SUPPORTED_METHODS:
+            continue
+        settings = state.year_settings.setdefault(year, {})
+        existing = settings.get("method")
+        if existing in (None, ""):
+            settings["method"] = method
+            summary["year_defaults_adopted"] += 1
+            changed = True
+        elif overwrite and existing != method:
+            settings["method"] = method
+            summary["year_defaults_overwritten"] += 1
+            changed = True
+        elif not overwrite and existing != method:
+            summary["year_defaults_skipped_conflicts"] += 1
+
+    if changed:
+        save_project_state(project_dir, state)
+
+    return summary
+
+
+def adopt_legacy_workbook_year_settings(
+    project_dir: Path | str,
+    workbook_path: Path | str,
+    *,
+    overwrite: bool = False,
+) -> dict[str, int]:
+    """Explicitly migrate Settings rows from a legacy workbook into ProjectState.
+
+    Normal runtime ignores workbook ``Settings.Tax rate``, ``Settings.FX method``,
+    ``Settings.Apply 100k exemption?``, and ``Settings.Notes`` (P3.2).  This
+    helper is the single supported path for adopting those values.
+
+    Field validation/normalization:
+    - ``tax_rate``           — must be a float in [0.0, 1.0]; invalid values skipped.
+    - ``fx_method``          — must be in SUPPORTED_FX_METHODS; invalid values skipped.
+    - ``apply_100k``         — coerced to bool; ``None`` skipped.
+    - ``notes``              — preserved as stripped string; blank/missing skipped.
+
+    With ``overwrite=False`` (default) only fields absent in ProjectState are
+    written (field-level fill-in).  With ``overwrite=True`` existing fields are
+    replaced.
+
+    Returns a summary dict:
+    - ``legacy_rows``         — valid Settings rows (parseable year) seen
+    - ``skipped_invalid``     — rows with unparseable year (skipped entirely)
+    - ``fields_adopted``      — fields written for the first time
+    - ``fields_overwritten``  — fields replaced (only when ``overwrite=True``)
+    - ``fields_skipped``      — fields skipped because ProjectState already owned
+                                the value and ``overwrite=False``
+    """
+    import build_stock_tax_workbook as _workbook  # local import to avoid circular
+
+    from stock_tax_app.engine.fx import SUPPORTED_FX_METHODS as _SUPPORTED_FX_METHODS
+
+    legacy_state = _workbook.load_existing_user_state(Path(workbook_path))
+    raw_rows = legacy_state.get("Settings") or []
+
+    state = load_project_state(project_dir)
+    summary: dict[str, int] = {
+        "legacy_rows": 0,
+        "skipped_invalid": 0,
+        "fields_adopted": 0,
+        "fields_overwritten": 0,
+        "fields_skipped": 0,
+    }
+
+    changed = False
+
+    for row in raw_rows:
+        if not isinstance(row, dict):
+            summary["skipped_invalid"] += 1
+            continue
+        try:
+            year = int(row.get("Tax year"))
+        except (TypeError, ValueError):
+            summary["skipped_invalid"] += 1
+            continue
+
+        summary["legacy_rows"] += 1
+
+        # Normalise / validate each field independently.
+        fields: dict[str, Any] = {}
+
+        raw_tax_rate = row.get("Tax rate")
+        if raw_tax_rate is not None and raw_tax_rate != "":
+            try:
+                tax_rate_val = float(raw_tax_rate)
+                if 0.0 <= tax_rate_val <= 1.0:
+                    fields["tax_rate"] = tax_rate_val
+            except (TypeError, ValueError):
+                pass
+
+        raw_fx = str(row.get("FX method") or "").strip().upper()
+        if raw_fx in _SUPPORTED_FX_METHODS:
+            fields["fx_method"] = raw_fx
+
+        raw_100k = row.get("Apply 100k exemption?")
+        if raw_100k is not None:
+            fields["apply_100k"] = bool(raw_100k)
+
+        raw_notes = row.get("Notes")
+        if raw_notes is not None and str(raw_notes).strip():
+            fields["notes"] = str(raw_notes).strip()
+
+        if not fields:
+            continue
+
+        year_row = state.year_settings.setdefault(year, {})
+        for field_name, field_value in fields.items():
+            if field_name not in year_row:
+                year_row[field_name] = field_value
+                summary["fields_adopted"] += 1
+                changed = True
+            elif overwrite and year_row[field_name] != field_value:
+                year_row[field_name] = field_value
+                summary["fields_overwritten"] += 1
+                changed = True
+            elif not overwrite and year_row.get(field_name) != field_value:
+                summary["fields_skipped"] += 1
+
+    if changed:
+        save_project_state(project_dir, state)
+
+    return summary
+
+
+def adopt_legacy_workbook_instrument_map(
+    project_dir: Path | str,
+    workbook_path: Path | str,
+    *,
+    overwrite: bool = False,
+) -> dict[str, int]:
+    """Explicitly migrate Instrument_Map rows from a legacy workbook into ProjectState.
+
+    Normal runtime ignores workbook ``Instrument_Map`` (P3.3).  This helper is
+    the single supported path for adopting legacy instrument mappings.
+
+    Field validation/normalization:
+    - ``Yahoo Symbol`` — required (row key); rows without it are skipped.
+    - ``Instrument_ID`` — used as-is; defaults to symbol if blank.
+    - ``ISIN`` — preserved as stripped string.
+    - ``Instrument name`` — preserved as stripped string.
+    - ``Notes`` — preserved as stripped string.
+
+    With ``overwrite=False`` (default) only entries absent in ProjectState are
+    written (whole-entry fill-in).  With ``overwrite=True`` existing entries are
+    replaced.
+
+    Returns a summary dict:
+    - ``legacy_rows``       — valid Instrument_Map rows (non-blank Yahoo Symbol) seen
+    - ``skipped_invalid``   — rows skipped because Yahoo Symbol is missing or blank
+    - ``adopted``           — entries written for the first time
+    - ``overwritten``       — entries replaced (only when ``overwrite=True``)
+    - ``skipped_conflicts`` — entries skipped because ProjectState already owned them
+                              and ``overwrite=False``
+    """
+    import build_stock_tax_workbook as _workbook  # local import to avoid circular
+
+    legacy_state = _workbook.load_existing_user_state(Path(workbook_path))
+    raw_rows = legacy_state.get("Instrument_Map") or []
+
+    state = load_project_state(project_dir)
+    summary: dict[str, int] = {
+        "legacy_rows": 0,
+        "skipped_invalid": 0,
+        "adopted": 0,
+        "overwritten": 0,
+        "skipped_conflicts": 0,
+    }
+
+    changed = False
+
+    for row in raw_rows:
+        if not isinstance(row, dict):
+            summary["skipped_invalid"] += 1
+            continue
+        symbol = str(row.get("Yahoo Symbol") or "").strip()
+        if not symbol:
+            summary["skipped_invalid"] += 1
+            continue
+
+        summary["legacy_rows"] += 1
+        normalized = _normalize_instrument_map_entry(symbol, row)
+
+        existing = state.instrument_map.get(symbol)
+        if existing is None:
+            state.instrument_map[symbol] = normalized
+            summary["adopted"] += 1
+            changed = True
+        elif overwrite:
+            state.instrument_map[symbol] = normalized
+            summary["overwritten"] += 1
+            changed = True
+        else:
+            summary["skipped_conflicts"] += 1
+
+    if changed:
+        save_project_state(project_dir, state)
+
+    return summary
 
 
 def merge_project_state_with_legacy_fallback(
@@ -321,7 +610,19 @@ def _merge_settings_rows(
             year = int(row.get("Tax year"))
         except (TypeError, ValueError):
             continue
-        rows_by_year[year] = dict(row)
+        merged = dict(row)
+        # P3.1: workbook Method_Selection retired from runtime; the per-year
+        # default method must come from ProjectState or policy/default, never
+        # silently from a legacy Settings.Method column.
+        merged.pop("Method", None)
+        # P3.2: Retire legacy Settings fallback for Tax rate, FX method,
+        # Apply 100k exemption?, Notes.  These must come from ProjectState or
+        # policy/generated defaults — workbook values are never used silently.
+        merged.pop("Tax rate", None)
+        merged.pop("FX method", None)
+        merged.pop("Apply 100k exemption?", None)
+        merged.pop("Notes", None)
+        rows_by_year[year] = merged
 
     for year, state_row in project_state.year_settings.items():
         merged = dict(rows_by_year.get(year, {"Tax year": year, "Locked year?": False}))
@@ -345,16 +646,11 @@ def _merge_method_selection_rows(
     project_state: ProjectState,
     legacy_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    # P3.1: legacy_rows are intentionally ignored. Workbook Method_Selection
+    # is no longer a silent runtime fallback — only ProjectState entries
+    # contribute, and missing entries fall back to policy/default downstream.
+    del legacy_rows
     rows_by_key: dict[tuple[int, str], dict[str, Any]] = {}
-    for row in legacy_rows:
-        try:
-            year = int(row.get("Tax year"))
-        except (TypeError, ValueError):
-            continue
-        instrument_id = str(row.get("Instrument_ID") or "").strip()
-        if not instrument_id:
-            continue
-        rows_by_key[(year, instrument_id)] = dict(row)
 
     for year, selections in project_state.method_selection.items():
         for instrument_id, method in selections.items():
@@ -426,16 +722,16 @@ def _merge_instrument_map_rows(
     project_state: ProjectState,
     legacy_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    # P3.3: legacy_rows are intentionally ignored. Workbook Instrument_Map
+    # is no longer a silent runtime fallback — only ProjectState entries
+    # contribute, and missing entries fall back to generated/default instrument
+    # identity downstream.
+    del legacy_rows
     rows_by_symbol: dict[str, dict[str, Any]] = {}
-    for row in legacy_rows:
-        symbol = str(row.get("Yahoo Symbol") or "").strip()
-        if not symbol:
-            continue
-        rows_by_symbol[symbol] = dict(row)
 
     for symbol, mapping in project_state.instrument_map.items():
         normalized = _normalize_instrument_map_entry(symbol, mapping)
-        merged = dict(rows_by_symbol.get(symbol, {}))
+        merged: dict[str, Any] = {}
         merged["Yahoo Symbol"] = symbol
         merged["Instrument_ID"] = normalized["instrument_id"]
         merged["ISIN"] = normalized["isin"]

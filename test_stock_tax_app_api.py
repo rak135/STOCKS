@@ -929,7 +929,13 @@ def test_fx_resolver_complete_fx_still_works():
 
 def test_api_status_exposes_missing_fx_and_blocks_calculation(tmp_path, monkeypatch):
     project = _copy_project_fixture(tmp_path)
-    _set_year_fx_method(project, 2020, "FX_DAILY_CNB")
+    # Generate workbook before setting FX_DAILY_CNB so _ensure_test_workbook doesn't
+    # try to generate it with blocked FX state (P3.2: FX method from ProjectState).
+    _ensure_test_workbook(project)
+    # P3.2: FX method must come from ProjectState, not workbook Settings.
+    project_store.save_project_state(
+        project, ProjectState(year_settings={2020: {"fx_method": "FX_DAILY_CNB"}})
+    )
     _clear_fx_daily_rows(project)
     monkeypatch.setattr(
         workbook_module,
@@ -966,7 +972,12 @@ def test_api_status_exposes_missing_fx_and_blocks_calculation(tmp_path, monkeypa
 
 def test_blocked_collections_expose_truth_metadata_not_ambiguous_empty_success(tmp_path, monkeypatch):
     project = _copy_project_fixture(tmp_path)
-    _set_year_fx_method(project, 2020, "FX_DAILY_CNB")
+    # Generate workbook before setting FX_DAILY_CNB (P3.2: FX method from ProjectState).
+    _ensure_test_workbook(project)
+    # P3.2: FX method must come from ProjectState, not workbook Settings.
+    project_store.save_project_state(
+        project, ProjectState(year_settings={2020: {"fx_method": "FX_DAILY_CNB"}})
+    )
     _clear_fx_daily_rows(project)
     monkeypatch.setattr(
         workbook_module,
@@ -993,7 +1004,12 @@ def test_blocked_collections_expose_truth_metadata_not_ambiguous_empty_success(t
 
 def test_sales_list_blocked_empty_has_no_financial_rows(tmp_path, monkeypatch):
     project = _copy_project_fixture(tmp_path)
-    _set_year_fx_method(project, 2020, "FX_DAILY_CNB")
+    # Generate workbook before setting FX_DAILY_CNB (P3.2: FX method from ProjectState).
+    _ensure_test_workbook(project)
+    # P3.2: FX method must come from ProjectState, not workbook Settings.
+    project_store.save_project_state(
+        project, ProjectState(year_settings={2020: {"fx_method": "FX_DAILY_CNB"}})
+    )
     _clear_fx_daily_rows(project)
     monkeypatch.setattr(
         workbook_module,
@@ -1011,7 +1027,12 @@ def test_sales_list_blocked_empty_has_no_financial_rows(tmp_path, monkeypatch):
 
 def test_project_state_fx_can_unblock_strict_daily_fx(tmp_path, monkeypatch):
     project = _copy_project_fixture(tmp_path)
-    _set_year_fx_method(project, 2020, "FX_DAILY_CNB")
+    # Generate workbook before setting FX_DAILY_CNB (P3.2: FX method from ProjectState).
+    _ensure_test_workbook(project)
+    # P3.2: FX method must come from ProjectState, not workbook Settings.
+    project_store.save_project_state(
+        project, ProjectState(year_settings={2020: {"fx_method": "FX_DAILY_CNB"}})
+    )
     _clear_fx_daily_rows(project)
     monkeypatch.setattr(
         workbook_module,
@@ -1030,9 +1051,11 @@ def test_project_state_fx_can_unblock_strict_daily_fx(tmp_path, monkeypatch):
         fetch_missing_fx=False,
     )
     required_dates = sorted({tx.trade_date.isoformat() for tx in calc.txs if tx.trade_date.year == 2020})
+    # P3.2: Must preserve year_settings (fx_method) when updating ProjectState with fx_daily.
     project_store.save_project_state(
         project,
         ProjectState(
+            year_settings={2020: {"fx_method": "FX_DAILY_CNB"}},
             fx_daily={
                 day: {
                     "currency_pair": "USD/CZK",
@@ -1066,7 +1089,7 @@ def test_api_provenance_exposes_project_state_owned_domains(tmp_path, monkeypatc
     project = _copy_project_fixture(tmp_path)
     baseline = run(project_dir=project, write_workbook=False)
     first_sale = baseline.sales.items[0]
-    _set_year_fx_method(project, 2020, "FX_DAILY_CNB")
+    # P3.2: FX method for 2020 must come from ProjectState, not workbook Settings.
     _clear_fx_daily_rows(project)
     monkeypatch.setattr(
         workbook_module,
@@ -1087,12 +1110,13 @@ def test_api_provenance_exposes_project_state_owned_domains(tmp_path, monkeypatc
         project,
         ProjectState(
             year_settings={
+                2020: {"fx_method": "FX_DAILY_CNB"},
                 2025: {
                     "tax_rate": 0.2,
                     "fx_method": "FX_UNIFIED_GFR",
                     "apply_100k": False,
                     "notes": "state-owned",
-                }
+                },
             },
             method_selection={first_sale.year: {"STATE_PROVENANCE": "MAX_GAIN"}},
             fx_daily={
@@ -1138,7 +1162,12 @@ def test_api_provenance_exposes_project_state_owned_domains(tmp_path, monkeypatc
 
 def test_missing_fx_still_blocks_after_project_state_merge_path(tmp_path, monkeypatch):
     project = _copy_project_fixture(tmp_path)
-    _set_year_fx_method(project, 2020, "FX_DAILY_CNB")
+    # Generate workbook before setting FX_DAILY_CNB (P3.2: FX method from ProjectState).
+    _ensure_test_workbook(project)
+    # P3.2: FX method must come from ProjectState, not workbook Settings.
+    project_store.save_project_state(
+        project, ProjectState(year_settings={2020: {"fx_method": "FX_DAILY_CNB"}})
+    )
     _clear_fx_daily_rows(project)
     monkeypatch.setattr(
         workbook_module,
@@ -1704,7 +1733,12 @@ def test_workbook_export_reflects_project_state_fx(tmp_path):
 
 def test_blocked_fx_run_skips_workbook_write_and_write_path_fails_cleanly(tmp_path, monkeypatch):
     project = _copy_project_fixture(tmp_path)
-    _set_year_fx_method(project, 2020, "FX_DAILY_CNB")
+    # Generate workbook before setting FX_DAILY_CNB (P3.2: FX method from ProjectState).
+    _ensure_test_workbook(project)
+    # P3.2: FX method must come from ProjectState, not workbook Settings.
+    project_store.save_project_state(
+        project, ProjectState(year_settings={2020: {"fx_method": "FX_DAILY_CNB"}})
+    )
     _clear_fx_daily_rows(project)
     monkeypatch.setattr(
         workbook_module,

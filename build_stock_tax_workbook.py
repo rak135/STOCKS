@@ -902,6 +902,27 @@ def adopt_legacy_workbook_review_state(
     }
 
 
+def adopt_legacy_workbook_method_selection(
+    project_dir: Path | str,
+    workbook_path: Path | str,
+    *,
+    overwrite: bool = False,
+) -> Dict[str, int]:
+    """Explicitly migrate workbook ``Method_Selection`` rows into ProjectState.
+
+    Normal runtime ignores workbook ``Method_Selection`` (P3.1). Operators
+    invoke this helper to migrate legacy per-instrument method selections (and
+    any per-year default ``Method`` from the Settings sheet) into ProjectState.
+    """
+    workbook = Path(workbook_path)
+    legacy_user_state = load_existing_user_state(workbook)
+    return project_store.adopt_legacy_workbook_method_selection(
+        project_dir,
+        legacy_user_state,
+        overwrite=overwrite,
+    )
+
+
 def load_filed_reconciliation(user_state: Dict[str, Any]
                               ) -> Dict[int, Dict[str, Any]]:
     """Return {year: {filed_method, filed_tax_base, filed_tax_due}} from Filed_Year_Reconciliation."""

@@ -11,6 +11,7 @@ import pytest
 
 import build_stock_tax_workbook as workbook_module
 from stock_tax_app.backend.main import create_app
+from stock_tax_app.engine import policy
 from stock_tax_app.engine.core import run
 from stock_tax_app.state import project_store
 from stock_tax_app.state.models import ProjectState, ProjectStateMetadata, SCHEMA_VERSION
@@ -440,7 +441,25 @@ def test_per_instrument_method_override_beats_year_method_default(tmp_path):
     assert year_row.method == "MIN_GAIN"
 
 
-def test_legacy_workbook_fallback_works_and_can_be_adopted(tmp_path):
+def test_legacy_workbook_settings_fallback_retired_p3_2(tmp_path):
+    """P3.2: Workbook Settings.Tax rate / FX method / Apply 100k / Notes must NOT
+    flow into normal runtime.  Runtime must use policy/generated defaults when
+    ProjectState has no entry for those fields."""
+    project = _copy_project_fixture(tmp_path)
+
+    _set_workbook_tax_rate(project, 2025, 0.21)
+
+    # No ProjectState written — runtime must ignore workbook Settings.Tax rate.
+    result = run(project_dir=project, write_workbook=False)
+    year_2025 = next(year for year in result.tax_years.items if year.year == 2025)
+    import build_stock_tax_workbook as _wbm
+    assert year_2025.tax_rate == pytest.approx(_wbm.DEFAULT_TAX_RATE)
+    assert year_2025.settings_source == "generated_default"
+
+
+def test_legacy_workbook_settings_adoption_still_works_after_p3_2(tmp_path):
+    """P3.2: Explicit adoption via adopt_legacy_workbook_state still migrates
+    Settings rows into ProjectState.  This is the only supported path."""
     project = _copy_project_fixture(tmp_path)
     baseline = run(project_dir=project, write_workbook=False)
     first_sale = baseline.sales.items[0]
@@ -448,11 +467,12 @@ def test_legacy_workbook_fallback_works_and_can_be_adopted(tmp_path):
     _set_workbook_tax_rate(project, 2025, 0.21)
     _set_workbook_method_selection(project, first_sale.year, first_sale.instrument_id, "MAX_GAIN")
 
+    # Method selection is retired (P3.1) — runtime must use policy/default until adoption.
     result = run(project_dir=project, write_workbook=False)
     sale_after = next(sale for sale in result.sales.items if sale.id == first_sale.id)
-    year_2025 = next(year for year in result.tax_years.items if year.year == 2025)
-    assert sale_after.method == "MAX_GAIN"
-    assert year_2025.tax_rate == 0.21
+    assert sale_after.method == policy.default_method_for(first_sale.year)
+    year_first = next(year for year in result.tax_years.items if year.year == first_sale.year)
+    assert year_first.method_source != "workbook_fallback"
 
     legacy_state = workbook_module.load_existing_user_state(_workbook_path(project))
     adopted = project_store.adopt_legacy_workbook_state(project, legacy_state)
@@ -596,7 +616,13 @@ def test_project_state_instrument_map_beats_workbook_fallback(tmp_path):
     assert calc.instrument_map[symbol]["ISIN"] == "STATE000SHOP"
 
 
-def test_workbook_instrument_map_fallback_still_works(tmp_path):
+def test_p3_3_workbook_instrument_map_no_longer_fallback(tmp_path):
+    """P3.3: Workbook-only Instrument_Map must not influence normal runtime.
+
+    When ProjectState has no instrument map entry for a symbol, runtime must use
+    generated/default identity (symbol itself as instrument_id), not any value
+    stored in the workbook Instrument_Map sheet.
+    """
     project = _copy_project_fixture(tmp_path)
     symbol = "SHOP"
     _set_workbook_instrument_map(
@@ -608,9 +634,21 @@ def test_workbook_instrument_map_fallback_still_works(tmp_path):
         notes="workbook map",
     )
 
+    # No ProjectState instrument map entry — only workbook has a row.
     result = run(project_dir=project, write_workbook=False)
     sale = next(sale for sale in result.sales.items if sale.ticker == symbol)
-    assert sale.instrument_id == "SHOP_WORKBOOK"
+    # After P3.3: generated default, not workbook value.
+    assert sale.instrument_id == symbol
+    assert sale.instrument_map_source == "generated_default"
+
+    calc = workbook_module.calculate_workbook_data(
+        inputs=sorted((project / ".csv").glob("*.csv")),
+        out_path=_workbook_path(project),
+        project_dir=project,
+        fetch_missing_fx=False,
+    )
+    # Merged user_state Instrument_Map must not carry the workbook-only row.
+    assert calc.instrument_map[symbol]["Instrument_ID"] == symbol
 
 
 def test_default_generated_instrument_map_still_works(tmp_path):
@@ -934,3 +972,564 @@ def test_valid_split_action_changes_open_inventory_quantities(tmp_path):
     after = run(project_dir=project, write_workbook=False)
     updated = next(pos for pos in after.open_positions.items if pos.instrument_id == target.instrument_id)
     assert float(updated.calculated_qty) == pytest.approx(float(target.calculated_qty) * 2.0)
+
+
+# ---------------------------------------------------------------------------
+# P3.1 — Method_Selection workbook fallback retirement
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_ignores_workbook_method_selection_when_project_state_missing(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline = run(project_dir=project, write_workbook=False)
+    first_sale = baseline.sales.items[0]
+
+    _set_workbook_method_selection(
+        project, first_sale.year, first_sale.instrument_id, "MAX_GAIN"
+    )
+
+    assert not project_store.state_path_for(project).exists()
+
+    result = run(project_dir=project, write_workbook=False)
+    sale_after = next(sale for sale in result.sales.items if sale.id == first_sale.id)
+    year_row = next(year for year in result.tax_years.items if year.year == first_sale.year)
+
+    expected_default = policy.default_method_for(first_sale.year)
+    assert sale_after.method == expected_default
+    assert year_row.method_source != "workbook_fallback"
+    if not policy.is_filed(first_sale.year):
+        assert year_row.method_source == "generated_default"
+    # Runtime must not silently materialize a project state file.
+    assert not project_store.state_path_for(project).exists()
+
+
+def test_explicit_method_selection_adoption_migrates_workbook_rows(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline = run(project_dir=project, write_workbook=False)
+    first_sale = baseline.sales.items[0]
+
+    _set_workbook_method_selection(
+        project, first_sale.year, first_sale.instrument_id, "MAX_GAIN"
+    )
+
+    summary = workbook_module.adopt_legacy_workbook_method_selection(
+        project, _workbook_path(project)
+    )
+    assert summary["adopted"] >= 1
+    assert summary["skipped_conflicts"] == 0
+    assert summary["legacy_rows"] >= 1
+
+    state = project_store.load_project_state(project)
+    assert (
+        state.method_selection[first_sale.year][first_sale.instrument_id] == "MAX_GAIN"
+    )
+
+    result = run(project_dir=project, write_workbook=False)
+    sale_after = next(sale for sale in result.sales.items if sale.id == first_sale.id)
+    year_row = next(year for year in result.tax_years.items if year.year == first_sale.year)
+    assert sale_after.method == "MAX_GAIN"
+    assert year_row.method_source == "project_state"
+
+
+def test_project_state_method_beats_workbook_method_selection_conflict(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline = run(project_dir=project, write_workbook=False)
+    first_sale = baseline.sales.items[0]
+
+    _set_workbook_method_selection(
+        project, first_sale.year, first_sale.instrument_id, "MAX_GAIN"
+    )
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            method_selection={first_sale.year: {first_sale.instrument_id: "FIFO"}},
+        ),
+    )
+
+    result = run(project_dir=project, write_workbook=False)
+    sale_after = next(sale for sale in result.sales.items if sale.id == first_sale.id)
+    year_row = next(year for year in result.tax_years.items if year.year == first_sale.year)
+    assert sale_after.method == "FIFO"
+    assert year_row.method_source == "project_state"
+
+
+def test_explicit_method_selection_adoption_overwrite_false_preserves_existing(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline = run(project_dir=project, write_workbook=False)
+    first_sale = baseline.sales.items[0]
+
+    _set_workbook_method_selection(
+        project, first_sale.year, first_sale.instrument_id, "MAX_GAIN"
+    )
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            method_selection={first_sale.year: {first_sale.instrument_id: "FIFO"}},
+        ),
+    )
+
+    summary = workbook_module.adopt_legacy_workbook_method_selection(
+        project, _workbook_path(project), overwrite=False
+    )
+    assert summary["skipped_conflicts"] >= 1
+    assert summary["overwritten"] == 0
+
+    state = project_store.load_project_state(project)
+    assert (
+        state.method_selection[first_sale.year][first_sale.instrument_id] == "FIFO"
+    )
+
+
+def test_explicit_method_selection_adoption_overwrite_true_replaces_conflicts(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    baseline = run(project_dir=project, write_workbook=False)
+    first_sale = baseline.sales.items[0]
+
+    _set_workbook_method_selection(
+        project, first_sale.year, first_sale.instrument_id, "MAX_GAIN"
+    )
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            method_selection={first_sale.year: {first_sale.instrument_id: "FIFO"}},
+        ),
+    )
+
+    summary = workbook_module.adopt_legacy_workbook_method_selection(
+        project, _workbook_path(project), overwrite=True
+    )
+    assert summary["overwritten"] >= 1
+
+    state = project_store.load_project_state(project)
+    assert (
+        state.method_selection[first_sale.year][first_sale.instrument_id] == "MAX_GAIN"
+    )
+
+
+def test_explicit_method_selection_adoption_skips_invalid_methods(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    legacy = {
+        "Method_Selection": [
+            {"Tax year": 2025, "Instrument_ID": "AAPL", "Method": "BOGUS"},
+            {"Tax year": "not-a-year", "Instrument_ID": "AAPL", "Method": "FIFO"},
+            {"Tax year": 2025, "Instrument_ID": "", "Method": "FIFO"},
+            {"Tax year": 2025, "Instrument_ID": "MSFT", "Method": "lifo"},
+        ]
+    }
+
+    summary = project_store.adopt_legacy_workbook_method_selection(project, legacy)
+    assert summary["skipped_invalid"] == 3
+    assert summary["adopted"] == 1
+
+    state = project_store.load_project_state(project)
+    assert state.method_selection[2025]["MSFT"] == "LIFO"
+
+
+# ---------------------------------------------------------------------------
+# P3.2 — Year-settings workbook fallback retirement tests
+# ---------------------------------------------------------------------------
+
+def test_p3_2_runtime_ignores_workbook_tax_rate_when_project_state_missing(tmp_path):
+    """A: Runtime must NOT read workbook Settings.Tax rate as truth."""
+    project = _copy_project_fixture(tmp_path)
+    _set_workbook_tax_rate(project, 2025, 0.19)
+
+    result = run(project_dir=project, write_workbook=False)
+    year_2025 = next(year for year in result.tax_years.items if year.year == 2025)
+
+    assert year_2025.tax_rate == pytest.approx(workbook_module.DEFAULT_TAX_RATE)
+    assert year_2025.settings_source == "generated_default"
+
+
+def test_p3_2_runtime_ignores_workbook_fx_method_when_project_state_missing(tmp_path):
+    """B: Runtime must NOT read workbook Settings.FX method as truth."""
+    project = _copy_project_fixture(tmp_path)
+    _ensure_test_workbook(project)
+
+    # Manually write FX_DAILY_CNB into workbook Settings sheet
+    from openpyxl import load_workbook as _lw
+    wb = _lw(_workbook_path(project))
+    ws = wb["Settings"]
+    for row in range(2, ws.max_row + 1):
+        if ws.cell(row=row, column=1).value == 2025:
+            ws.cell(row=row, column=3, value="FX_DAILY_CNB")
+            break
+    wb.save(_workbook_path(project))
+
+    result = run(project_dir=project, write_workbook=False)
+    year_2025 = next(year for year in result.tax_years.items if year.year == 2025)
+
+    # Runtime must ignore the workbook FX method and use the policy default.
+    assert year_2025.fx_method == workbook_module.DEFAULT_FX_METHOD
+    assert year_2025.settings_source == "generated_default"
+
+
+def test_p3_2_runtime_ignores_workbook_apply_100k_when_project_state_missing(tmp_path):
+    """C: Runtime must NOT read workbook Settings.Apply 100k exemption? as truth."""
+    project = _copy_project_fixture(tmp_path)
+    _ensure_test_workbook(project)
+
+    from openpyxl import load_workbook as _lw
+    wb = _lw(_workbook_path(project))
+    ws = wb["Settings"]
+    for row in range(2, ws.max_row + 1):
+        if ws.cell(row=row, column=1).value == 2025:
+            ws.cell(row=row, column=4, value=True)
+            break
+    wb.save(_workbook_path(project))
+
+    result = run(project_dir=project, write_workbook=False)
+    year_2025 = next(year for year in result.tax_years.items if year.year == 2025)
+
+    assert year_2025.exemption_100k is False
+    assert year_2025.settings_source == "generated_default"
+
+
+def test_p3_2_get_years_does_not_report_workbook_fallback_for_settings_fields(tmp_path):
+    """E: GET /api/years must never report workbook_fallback for year settings source."""
+    project = _copy_project_fixture(tmp_path)
+    _set_workbook_tax_rate(project, 2025, 0.19)
+
+    client = TestClient(create_app(project_dir=project))
+    body = client.get("/api/years").json()
+
+    for item in body["items"]:
+        assert item["settings_source"] != "workbook_fallback", (
+            f"Year {item['year']} reported settings_source='workbook_fallback' after P3.2 retirement"
+        )
+    # reconciliation_source for filed years may still show workbook_fallback (not retired in P3.2)
+    # but settings_source must not contribute workbook_fallback to the sources list.
+    settings_sources = {item["settings_source"] for item in body["items"]}
+    assert "workbook_fallback" not in settings_sources
+
+
+def test_p3_2_adopt_legacy_workbook_year_settings_migrates_into_project_state(tmp_path):
+    """F: Explicit adoption migrates workbook Settings into ProjectState."""
+    project = _copy_project_fixture(tmp_path)
+    _set_workbook_tax_rate(project, 2025, 0.21)
+
+    summary = project_store.adopt_legacy_workbook_year_settings(
+        project,
+        _workbook_path(project),
+    )
+
+    assert summary["fields_adopted"] >= 1
+    state = project_store.load_project_state(project)
+    assert state.year_settings[2025]["tax_rate"] == pytest.approx(0.21)
+
+    # After adoption, runtime uses ProjectState value.
+    result = run(project_dir=project, write_workbook=False)
+    year_2025 = next(year for year in result.tax_years.items if year.year == 2025)
+    assert year_2025.tax_rate == pytest.approx(0.21)
+    assert year_2025.settings_source == "project_state"
+
+
+def test_p3_2_project_state_wins_over_workbook_settings_after_adoption_attempt(tmp_path):
+    """G: ProjectState always wins in normal runtime over workbook Settings."""
+    project = _copy_project_fixture(tmp_path)
+    _set_workbook_tax_rate(project, 2025, 0.19)
+
+    project_store.save_project_state(
+        project,
+        ProjectState(year_settings={2025: {"tax_rate": 0.20}}),
+    )
+
+    result = run(project_dir=project, write_workbook=False)
+    year_2025 = next(year for year in result.tax_years.items if year.year == 2025)
+    assert year_2025.tax_rate == pytest.approx(0.20)
+    assert year_2025.settings_source == "project_state"
+
+
+def test_p3_2_adopt_year_settings_overwrite_false_fills_only_missing_fields(tmp_path):
+    """H: overwrite=False fills missing fields but skips existing ones field-by-field."""
+    project = _copy_project_fixture(tmp_path)
+    # ProjectState owns tax_rate but not fx_method
+    project_store.save_project_state(
+        project,
+        ProjectState(year_settings={2025: {"tax_rate": 0.20}}),
+    )
+    # Workbook has both tax_rate (different value) and fx_method
+    _set_workbook_tax_rate(project, 2025, 0.19)
+
+    summary = project_store.adopt_legacy_workbook_year_settings(
+        project,
+        _workbook_path(project),
+        overwrite=False,
+    )
+
+    state = project_store.load_project_state(project)
+    # tax_rate must NOT be overwritten (PS owns it)
+    assert state.year_settings[2025]["tax_rate"] == pytest.approx(0.20)
+    assert summary["fields_skipped"] >= 1
+
+
+def test_p3_2_adopt_year_settings_overwrite_true_replaces_existing_fields(tmp_path):
+    """I: overwrite=True replaces existing fields from workbook."""
+    project = _copy_project_fixture(tmp_path)
+    project_store.save_project_state(
+        project,
+        ProjectState(year_settings={2025: {"tax_rate": 0.20}}),
+    )
+    _set_workbook_tax_rate(project, 2025, 0.18)
+
+    summary = project_store.adopt_legacy_workbook_year_settings(
+        project,
+        _workbook_path(project),
+        overwrite=True,
+    )
+
+    state = project_store.load_project_state(project)
+    assert state.year_settings[2025]["tax_rate"] == pytest.approx(0.18)
+    assert summary["fields_overwritten"] >= 1
+
+
+def test_p3_2_adopt_year_settings_skips_invalid_tax_rate(tmp_path):
+    """Adoption skips tax_rate values outside [0.0, 1.0] and non-numeric values."""
+    project = _copy_project_fixture(tmp_path)
+    _ensure_test_workbook(project)
+
+    from openpyxl import load_workbook as _lw
+    wb = _lw(_workbook_path(project))
+    ws = wb["Settings"]
+    for row in range(2, ws.max_row + 1):
+        if ws.cell(row=row, column=1).value == 2025:
+            ws.cell(row=row, column=2, value=99.9)  # invalid: > 1.0
+            break
+    wb.save(_workbook_path(project))
+
+    summary = project_store.adopt_legacy_workbook_year_settings(
+        project,
+        _workbook_path(project),
+    )
+
+    # tax_rate should NOT have been written
+    state = project_store.load_project_state(project)
+    assert state.year_settings.get(2025, {}).get("tax_rate") is None
+    _ = summary  # summary counts may vary; just verify no tax_rate was stored
+
+
+def test_p3_2_adopt_year_settings_skips_invalid_fx_method(tmp_path):
+    """Adoption skips fx_method values not in SUPPORTED_FX_METHODS."""
+    project = _copy_project_fixture(tmp_path)
+    _ensure_test_workbook(project)
+
+    from openpyxl import load_workbook as _lw
+    wb = _lw(_workbook_path(project))
+    ws = wb["Settings"]
+    for row in range(2, ws.max_row + 1):
+        if ws.cell(row=row, column=1).value == 2025:
+            ws.cell(row=row, column=3, value="BOGUS_METHOD")
+            break
+    wb.save(_workbook_path(project))
+
+    summary = project_store.adopt_legacy_workbook_year_settings(
+        project,
+        _workbook_path(project),
+    )
+
+    state = project_store.load_project_state(project)
+    assert state.year_settings.get(2025, {}).get("fx_method") is None
+    _ = summary
+
+
+# ---------------------------------------------------------------------------
+# P3.3 — Instrument_Map workbook fallback retirement
+# ---------------------------------------------------------------------------
+
+
+def test_p3_3_adopt_instrument_map_migrates_entries(tmp_path):
+    """B: adopt_legacy_workbook_instrument_map writes workbook rows into ProjectState."""
+    project = _copy_project_fixture(tmp_path)
+    symbol = "SHOP"
+    _set_workbook_instrument_map(
+        project,
+        symbol,
+        instrument_id="SHOP_LEGACY",
+        isin="WB000SHOP",
+        instrument_name="Legacy SHOP",
+        notes="legacy note",
+    )
+
+    summary = project_store.adopt_legacy_workbook_instrument_map(
+        project,
+        _workbook_path(project),
+    )
+
+    assert summary["legacy_rows"] >= 1
+    assert summary["adopted"] >= 1
+    assert summary["skipped_conflicts"] == 0
+
+    state = project_store.load_project_state(project)
+    entry = state.instrument_map.get(symbol)
+    assert entry is not None
+    assert entry["instrument_id"] == "SHOP_LEGACY"
+    assert entry["isin"] == "WB000SHOP"
+
+    # Runtime now reflects adopted mapping.
+    result = run(project_dir=project, write_workbook=False)
+    sale = next(sale for sale in result.sales.items if sale.ticker == symbol)
+    assert sale.instrument_id == "SHOP_LEGACY"
+    assert sale.instrument_map_source == "project_state"
+
+
+def test_p3_3_adopt_overwrite_false_skips_conflicts(tmp_path):
+    """D: adopt with overwrite=False skips entries already in ProjectState."""
+    project = _copy_project_fixture(tmp_path)
+    symbol = "SHOP"
+    _set_workbook_instrument_map(
+        project,
+        symbol,
+        instrument_id="SHOP_LEGACY",
+        isin="WB000SHOP",
+        instrument_name="Legacy SHOP",
+        notes="legacy note",
+    )
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            instrument_map={
+                symbol: {
+                    "yahoo_symbol": symbol,
+                    "instrument_id": "SHOP_STATE",
+                    "isin": "STATE000SHOP",
+                    "instrument_name": "State SHOP",
+                    "notes": "state note",
+                }
+            }
+        ),
+    )
+
+    summary = project_store.adopt_legacy_workbook_instrument_map(
+        project,
+        _workbook_path(project),
+        overwrite=False,
+    )
+
+    assert summary["skipped_conflicts"] >= 1
+    assert summary["overwritten"] == 0
+
+    state = project_store.load_project_state(project)
+    assert state.instrument_map[symbol]["instrument_id"] == "SHOP_STATE"
+
+
+def test_p3_3_adopt_overwrite_true_replaces_existing(tmp_path):
+    """E: adopt with overwrite=True replaces existing ProjectState entries."""
+    project = _copy_project_fixture(tmp_path)
+    symbol = "SHOP"
+    _set_workbook_instrument_map(
+        project,
+        symbol,
+        instrument_id="SHOP_LEGACY",
+        isin="WB000SHOP",
+        instrument_name="Legacy SHOP",
+        notes="legacy note",
+    )
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            instrument_map={
+                symbol: {
+                    "yahoo_symbol": symbol,
+                    "instrument_id": "SHOP_STATE",
+                    "isin": "STATE000SHOP",
+                    "instrument_name": "State SHOP",
+                    "notes": "state note",
+                }
+            }
+        ),
+    )
+
+    summary = project_store.adopt_legacy_workbook_instrument_map(
+        project,
+        _workbook_path(project),
+        overwrite=True,
+    )
+
+    assert summary["overwritten"] >= 1
+
+    state = project_store.load_project_state(project)
+    assert state.instrument_map[symbol]["instrument_id"] == "SHOP_LEGACY"
+    assert state.instrument_map[symbol]["isin"] == "WB000SHOP"
+
+
+def test_p3_3_adopt_invalid_rows_skipped_with_counters(tmp_path):
+    """F: Rows with missing Yahoo Symbol are skipped and counted."""
+    project = _copy_project_fixture(tmp_path)
+    _ensure_test_workbook(project)
+
+    # Inject a blank-symbol row directly into the workbook Instrument_Map sheet.
+    from openpyxl import load_workbook as _lw
+    wb = _lw(_workbook_path(project))
+    ws = wb["Instrument_Map"]
+    blank_row = ws.max_row + 1
+    ws.cell(row=blank_row, column=1, value=None)  # no Yahoo Symbol
+    ws.cell(row=blank_row, column=2, value="BOGUS_ID")
+    wb.save(_workbook_path(project))
+
+    summary = project_store.adopt_legacy_workbook_instrument_map(
+        project,
+        _workbook_path(project),
+    )
+
+    assert summary["skipped_invalid"] >= 1
+
+
+def test_p3_3_project_state_instrument_map_survives_recalc(tmp_path):
+    """G: Existing ProjectState instrument mapping is preserved through recalc/reload."""
+    project = _copy_project_fixture(tmp_path)
+    symbol = "SHOP"
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            instrument_map={
+                symbol: {
+                    "yahoo_symbol": symbol,
+                    "instrument_id": "SHOP_PERSISTENT",
+                    "isin": "PERSIST000",
+                    "instrument_name": "Persistent SHOP",
+                    "notes": "persisted",
+                }
+            }
+        ),
+    )
+
+    # First calculation.
+    result1 = run(project_dir=project, write_workbook=False)
+    sale1 = next(sale for sale in result1.sales.items if sale.ticker == symbol)
+    assert sale1.instrument_id == "SHOP_PERSISTENT"
+
+    # Second calculation — state must survive.
+    result2 = run(project_dir=project, write_workbook=False)
+    sale2 = next(sale for sale in result2.sales.items if sale.ticker == symbol)
+    assert sale2.instrument_id == "SHOP_PERSISTENT"
+    assert sale2.instrument_map_source == "project_state"
+
+    reloaded = project_store.load_project_state(project)
+    assert reloaded.instrument_map[symbol]["instrument_id"] == "SHOP_PERSISTENT"
+
+
+def test_p3_3_instrument_map_source_never_workbook_fallback(tmp_path):
+    """I: instrument_map_source must never report workbook_fallback after P3.3."""
+    project = _copy_project_fixture(tmp_path)
+    symbol = "SHOP"
+    _set_workbook_instrument_map(
+        project,
+        symbol,
+        instrument_id="SHOP_WORKBOOK",
+        isin="WB999SHOP",
+        instrument_name="Workbook SHOP",
+        notes="wb note",
+    )
+    # No ProjectState instrument map entry.
+    result = run(project_dir=project, write_workbook=False)
+
+    for sale in result.sales.items:
+        assert sale.instrument_map_source != "workbook_fallback", (
+            f"Sale {sale.id} (ticker={sale.ticker}) reported instrument_map_source='workbook_fallback' "
+            "after P3.3 retirement"
+        )
+    for pos in result.open_positions.items:
+        assert pos.instrument_map_source != "workbook_fallback", (
+            f"Open position {pos.instrument_id} reported instrument_map_source='workbook_fallback' "
+            "after P3.3 retirement"
+        )

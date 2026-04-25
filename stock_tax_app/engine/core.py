@@ -119,23 +119,6 @@ def _legacy_has_year_row(legacy_user_state: dict[str, Any], sheet: str, year: in
     return False
 
 
-def _legacy_has_method_row(
-    legacy_user_state: dict[str, Any],
-    year: int,
-    instrument_id: str | None = None,
-) -> bool:
-    for row in _legacy_rows(legacy_user_state, "Method_Selection"):
-        try:
-            row_year = int(row.get("Tax year"))
-        except (TypeError, ValueError):
-            continue
-        if row_year != year:
-            continue
-        if instrument_id is None or str(row.get("Instrument_ID") or "").strip() == instrument_id:
-            return True
-    return False
-
-
 def _legacy_has_instrument_map_row(legacy_user_state: dict[str, Any], symbol: str) -> bool:
     return any(
         str(row.get("Yahoo Symbol") or "").strip() == symbol
@@ -259,10 +242,12 @@ def _build_checks(calc: workbook.CalculationResult) -> list[Check]:
 
 
 def _year_settings_source(project_state: Any, legacy_user_state: dict[str, Any], year: int) -> str:
+    # P3.2: Workbook Settings is no longer a runtime fallback for Tax rate,
+    # FX method, Apply 100k exemption?, or Notes.  ProjectState always wins;
+    # missing values use policy/generated defaults, not workbook state.
+    del legacy_user_state
     if year in project_state.year_settings:
         return "project_state"
-    if _legacy_has_year_row(legacy_user_state, "Settings", year):
-        return "workbook_fallback"
     return "generated_default"
 
 
@@ -271,14 +256,16 @@ def _method_source(
     legacy_user_state: dict[str, Any],
     year: int,
 ) -> str:
+    # P3.1: workbook Method_Selection / Settings.Method are no longer silent
+    # runtime fallbacks. method_source is project_state when ProjectState owns
+    # the method, static_config for filed years, otherwise generated_default.
+    del legacy_user_state
     if policy.is_filed(year):
         return "static_config"
     if project_state.year_settings.get(year, {}).get("method") is not None:
         return "project_state"
     if project_state.method_selection.get(year):
         return "project_state"
-    if _legacy_has_method_row(legacy_user_state, year):
-        return "workbook_fallback"
     return "generated_default"
 
 
@@ -291,10 +278,11 @@ def _reconciliation_source(calc: workbook.CalculationResult, year: int) -> str:
 
 
 def _instrument_map_source(project_state: Any, legacy_user_state: dict[str, Any], symbol: str) -> str:
+    # P3.3: workbook Instrument_Map is no longer a runtime fallback.
+    # Source is project_state if ProjectState has an entry, otherwise generated_default.
+    del legacy_user_state
     if symbol in project_state.instrument_map:
         return "project_state"
-    if _legacy_has_instrument_map_row(legacy_user_state, symbol):
-        return "workbook_fallback"
     return "generated_default"
 
 
