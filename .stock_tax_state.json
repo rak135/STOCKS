@@ -1,0 +1,23 @@
+{
+  "corporate_actions": [],
+  "filed_year_reconciliation": {},
+  "frozen_inventory": {},
+  "frozen_lot_matching": {},
+  "frozen_snapshots": {},
+  "fx_daily": {},
+  "fx_yearly": {},
+  "instrument_map": {},
+  "locked_years": {},
+  "metadata": {
+    "schema_version": 1
+  },
+  "method_selection": {},
+  "year_settings": {
+    "2025": {
+      "apply_100k": false,
+      "fx_method": "FX_UNIFIED_GFR",
+      "method": "LIFO",
+      "tax_rate": 0.15
+    }
+  }
+}

@@ -1195,6 +1195,58 @@ def test_missing_fx_still_blocks_after_project_state_merge_path(tmp_path, monkey
     assert fx_2020["daily_cached"] == 0
 
 
+def test_p3_4_api_fx_yearly_does_not_use_workbook_fallback_source(tmp_path):
+    project = _copy_project_fixture(tmp_path)
+    _set_fx_yearly_row(project, 2025, 19.75, "workbook-only yearly")
+
+    client = TestClient(create_app(project_dir=project))
+    fx = client.get("/api/fx")
+    assert fx.status_code == 200
+    fx_2025 = next(row for row in fx.json()["items"] if row["year"] == 2025)
+
+    assert fx_2025["unified_rate"] != 19.75
+    assert fx_2025["rate_source"] != "workbook_fallback"
+
+
+def test_p3_4_api_strict_daily_still_blocks_when_only_workbook_daily_exists(tmp_path, monkeypatch):
+    project = _copy_project_fixture(tmp_path)
+    _ensure_test_workbook(project)
+    project_store.save_project_state(
+        project,
+        ProjectState(year_settings={2020: {"fx_method": "FX_DAILY_CNB"}}),
+    )
+    monkeypatch.setattr(
+        workbook_module,
+        "download_cnb_daily_rates_year",
+        lambda year, timeout=15: {},
+    )
+
+    baseline = workbook_module.calculate_workbook_data(
+        inputs=sorted((project / ".csv").glob("*.csv")),
+        out_path=_workbook_path(project),
+        project_dir=project,
+        fetch_missing_fx=False,
+    )
+    required_dates = sorted({tx.trade_date.isoformat() for tx in baseline.txs if tx.trade_date.year == 2020})
+    assert required_dates
+
+    _clear_fx_daily_rows(project)
+    for day in required_dates:
+        _set_fx_daily_row(project, day, 22.42, "workbook-only daily")
+
+    client = TestClient(create_app(project_dir=project))
+    status = client.get("/api/status")
+    assert status.status_code == 200
+    body = status.json()
+    assert body["global_status"] == "blocked"
+    assert any("FX_DAILY_CNB" in check["message"] for check in body["unresolved_checks"])
+
+    fx = client.get("/api/fx")
+    fx_2020 = next(row for row in fx.json()["items"] if row["year"] == 2020)
+    assert fx_2020["rate_source"] != "workbook_fallback"
+    assert fx_2020["missing_dates"]
+
+
 def test_open_positions_unknown_rows_have_explicit_truth_reason(tmp_path):
     project = _copy_project_fixture(tmp_path)
     client = TestClient(create_app(project_dir=project))

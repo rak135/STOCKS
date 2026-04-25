@@ -440,6 +440,125 @@ def adopt_legacy_workbook_instrument_map(
     return summary
 
 
+def adopt_legacy_workbook_fx(
+    project_dir: Path | str,
+    workbook_path: Path | str,
+    *,
+    overwrite: bool = False,
+) -> dict[str, dict[str, int]]:
+    """Explicitly migrate workbook FX sheets into ProjectState.
+
+    Normal runtime ignores workbook ``FX_Yearly`` and ``FX_Daily`` (P3.4).
+    This helper is the supported migration path for importing legacy FX rows.
+
+    Returns per-sheet summary counters under ``yearly`` and ``daily``.
+    """
+    import build_stock_tax_workbook as _workbook  # local import to avoid circular
+
+    legacy_state = _workbook.load_existing_user_state(Path(workbook_path))
+    state = load_project_state(project_dir)
+
+    yearly_summary: dict[str, int] = {
+        "legacy_rows": 0,
+        "skipped_invalid": 0,
+        "adopted": 0,
+        "overwritten": 0,
+        "skipped_conflicts": 0,
+    }
+    daily_summary: dict[str, int] = {
+        "legacy_rows": 0,
+        "skipped_invalid": 0,
+        "adopted": 0,
+        "overwritten": 0,
+        "skipped_conflicts": 0,
+    }
+
+    yearly_rows: dict[int, dict[str, Any]] = {}
+    for row in legacy_state.get("FX_Yearly") or []:
+        if not isinstance(row, dict):
+            yearly_summary["skipped_invalid"] += 1
+            continue
+        try:
+            year = int(row.get("Tax year"))
+        except (TypeError, ValueError):
+            yearly_summary["skipped_invalid"] += 1
+            continue
+        currency_pair = _normalized_currency_pair(row.get("Currency pair"))
+        rate = _coerce_float(row.get("USD_CZK"))
+        if currency_pair != _FX_CURRENCY_PAIR or rate is None or rate <= 0.0:
+            yearly_summary["skipped_invalid"] += 1
+            continue
+        source_note = str(row.get("Source / note") or "").strip()
+        yearly_rows[year] = {
+            "currency_pair": _FX_CURRENCY_PAIR,
+            "rate": rate,
+            "source_note": source_note,
+            "manual": True if not source_note else "manual" in source_note.lower(),
+        }
+
+    daily_rows: dict[str, dict[str, Any]] = {}
+    for row in legacy_state.get("FX_Daily") or []:
+        if not isinstance(row, dict):
+            daily_summary["skipped_invalid"] += 1
+            continue
+        date_key = _coerce_iso_date(row.get("Date"))
+        currency_pair = _normalized_currency_pair(row.get("Currency pair"))
+        rate = _coerce_float(row.get("USD_CZK"))
+        if date_key is None or currency_pair != _FX_CURRENCY_PAIR or rate is None or rate <= 0.0:
+            daily_summary["skipped_invalid"] += 1
+            continue
+        source_note = str(row.get("Source / note") or "").strip()
+        daily_rows[date_key] = {
+            "currency_pair": _FX_CURRENCY_PAIR,
+            "rate": rate,
+            "source_note": source_note,
+            "manual": "manual" in source_note.lower(),
+        }
+
+    yearly_summary["legacy_rows"] = len(yearly_rows)
+    daily_summary["legacy_rows"] = len(daily_rows)
+
+    changed = False
+
+    for year, fx_row in yearly_rows.items():
+        existing = _normalize_fx_entry(state.fx_yearly.get(year), default_manual=True)
+        if existing is None:
+            state.fx_yearly[year] = fx_row
+            yearly_summary["adopted"] += 1
+            changed = True
+            continue
+        if overwrite:
+            if existing != fx_row:
+                state.fx_yearly[year] = fx_row
+                yearly_summary["overwritten"] += 1
+                changed = True
+            continue
+        yearly_summary["skipped_conflicts"] += 1
+
+    for date_key, fx_row in daily_rows.items():
+        existing = _normalize_fx_entry(state.fx_daily.get(date_key))
+        if existing is None:
+            state.fx_daily[date_key] = fx_row
+            daily_summary["adopted"] += 1
+            changed = True
+            continue
+        if overwrite:
+            if existing != fx_row:
+                state.fx_daily[date_key] = fx_row
+                daily_summary["overwritten"] += 1
+                changed = True
+            continue
+        daily_summary["skipped_conflicts"] += 1
+
+    if changed:
+        save_project_state(project_dir, state)
+
+    return {
+        "yearly": yearly_summary,
+        "daily": daily_summary,
+    }
+
+
 def merge_project_state_with_legacy_fallback(
     project_state: ProjectState,
     legacy_state: dict[str, Any],
@@ -672,13 +791,12 @@ def _merge_fx_yearly_rows(
     project_state: ProjectState,
     legacy_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    # P3.4: legacy_rows are intentionally ignored. Workbook FX_Yearly
+    # is no longer a silent runtime fallback — only ProjectState entries
+    # contribute, and missing entries use existing default/static behavior
+    # downstream.
+    del legacy_rows
     rows_by_year: dict[int, dict[str, Any]] = {}
-    for row in legacy_rows:
-        try:
-            year = int(row.get("Tax year"))
-        except (TypeError, ValueError):
-            continue
-        rows_by_year[year] = dict(row)
 
     for year, entry in project_state.fx_yearly.items():
         normalized = _normalize_fx_entry(entry, default_manual=True)
@@ -698,12 +816,11 @@ def _merge_fx_daily_rows(
     project_state: ProjectState,
     legacy_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    # P3.4: legacy_rows are intentionally ignored. Workbook FX_Daily
+    # is no longer a silent runtime fallback — only ProjectState entries
+    # contribute, and strict daily mode reports missing coverage as-is.
+    del legacy_rows
     rows_by_day: dict[str, dict[str, Any]] = {}
-    for row in legacy_rows:
-        date_key = _coerce_iso_date(row.get("Date"))
-        if date_key is None:
-            continue
-        rows_by_day[date_key] = dict(row)
 
     for date_key, entry in project_state.fx_daily.items():
         normalized = _normalize_fx_entry(entry)
@@ -1082,6 +1199,15 @@ def _coerce_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _normalized_currency_pair(value: Any) -> str:
+    text = str(value or "").strip().upper().replace(" ", "")
+    if not text:
+        return _FX_CURRENCY_PAIR
+    if text == "USDCZK":
+        return _FX_CURRENCY_PAIR
+    return text
 
 
 def _coerce_iso_date(value: Any) -> str | None:

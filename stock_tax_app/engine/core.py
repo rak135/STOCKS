@@ -312,9 +312,8 @@ def _daily_rate_source(
     if required_iso_dates and required_iso_dates.issubset(project_state_dates):
         return "project_state"
 
-    legacy_dates = _legacy_daily_dates_for_year(legacy_user_state, year)
-    if required_iso_dates & legacy_dates:
-        return "workbook_fallback"
+    # P3.4: workbook FX_Daily is no longer a runtime fallback.
+    del legacy_user_state
 
     if any(value.year == year for value in calc.fx_daily):
         return "cnb_cache"
@@ -966,8 +965,6 @@ def _build_fx_years(
             )
         elif year in project_state.fx_yearly:
             rate_source = "project_state"
-        elif _legacy_has_year_row(legacy_user_state, "FX_Yearly", year):
-            rate_source = "workbook_fallback"
         elif calc.fx_yearly.get(year) is not None:
             rate_source = "static_config"
         else:
@@ -1020,7 +1017,7 @@ def _build_fx_years(
             reasons=reasons,
             sources=_unique_sources("calculated", *(year.rate_source for year in years)),
             items=years,
-            summary="FX response discloses whether effective rates came from ProjectState, workbook fallback, cache, or static defaults.",
+            summary="FX response discloses whether effective rates came from ProjectState, cache, static defaults, or are unavailable.",
         ),
     )
 

@@ -535,15 +535,15 @@ def test_project_state_daily_fx_beats_workbook_fallback(tmp_path):
     assert calc.fx_daily_sources[date.fromisoformat(target_day)] == "state daily"
 
 
-def test_workbook_fx_fallback_still_works_when_project_state_missing(tmp_path):
+def test_p3_4_runtime_ignores_workbook_fx_yearly_when_project_state_missing(tmp_path):
     project = _copy_project_fixture(tmp_path)
     _set_workbook_fx_yearly(project, 2025, 20.75, "workbook fallback")
 
     result = run(project_dir=project, write_workbook=False)
     year_2025 = next(year for year in result.fx_years.items if year.year == 2025)
 
-    assert year_2025.unified_rate == 20.75
-    assert year_2025.source_label == "workbook fallback"
+    assert year_2025.unified_rate != 20.75
+    assert year_2025.rate_source != "workbook_fallback"
 
 
 def test_explicit_legacy_adoption_migrates_fx_without_overwriting_existing_entries(tmp_path):
@@ -1533,3 +1533,205 @@ def test_p3_3_instrument_map_source_never_workbook_fallback(tmp_path):
             f"Open position {pos.instrument_id} reported instrument_map_source='workbook_fallback' "
             "after P3.3 retirement"
         )
+
+
+# ---------------------------------------------------------------------------
+# P3.4 - FX workbook fallback retirement
+# ---------------------------------------------------------------------------
+
+
+def test_p3_4_runtime_ignores_workbook_fx_daily_when_project_state_missing(tmp_path):
+    """B: strict daily must block when only workbook FX_Daily exists."""
+    project = _copy_project_fixture(tmp_path)
+    _ensure_test_workbook(project)
+
+    project_store.save_project_state(
+        project,
+        ProjectState(year_settings={2020: {"fx_method": "FX_DAILY_CNB"}}),
+    )
+
+    baseline = workbook_module.calculate_workbook_data(
+        inputs=sorted((project / ".csv").glob("*.csv")),
+        out_path=_workbook_path(project),
+        project_dir=project,
+        fetch_missing_fx=False,
+    )
+    required_dates = sorted({tx.trade_date.isoformat() for tx in baseline.txs if tx.trade_date.year == 2020})
+    assert required_dates
+
+    for day in required_dates:
+        _set_workbook_fx_daily(project, day, 22.50, "workbook-only daily")
+
+    result = run(project_dir=project, write_workbook=False)
+    assert result.app_status.global_status == "blocked"
+    assert any("FX_DAILY_CNB" in check.message for check in result.unresolved_checks)
+
+    fx_2020 = next(year for year in result.fx_years.items if year.year == 2020)
+    assert fx_2020.rate_source != "workbook_fallback"
+    assert fx_2020.missing_dates
+
+
+def test_p3_4_adopt_legacy_workbook_fx_migrates_yearly(tmp_path):
+    """C: Explicit helper migrates FX_Yearly into ProjectState."""
+    project = _copy_project_fixture(tmp_path)
+    _set_workbook_fx_yearly(project, 2025, 24.77, "legacy yearly")
+
+    summary = workbook_module.adopt_legacy_workbook_fx(project, _workbook_path(project))
+    assert summary["yearly"]["adopted"] >= 1
+
+    state = project_store.load_project_state(project)
+    assert state.fx_yearly[2025]["rate"] == pytest.approx(24.77)
+
+    result = run(project_dir=project, write_workbook=False)
+    year_2025 = next(year for year in result.fx_years.items if year.year == 2025)
+    assert year_2025.unified_rate == pytest.approx(24.77)
+    assert year_2025.rate_source == "project_state"
+
+
+def test_p3_4_adopt_legacy_workbook_fx_migrates_daily_and_unblocks(tmp_path):
+    """D: Explicit helper migrates FX_Daily and strict daily no longer blocks."""
+    project = _copy_project_fixture(tmp_path)
+    _ensure_test_workbook(project)
+    project_store.save_project_state(
+        project,
+        ProjectState(year_settings={2020: {"fx_method": "FX_DAILY_CNB"}}),
+    )
+
+    baseline = workbook_module.calculate_workbook_data(
+        inputs=sorted((project / ".csv").glob("*.csv")),
+        out_path=_workbook_path(project),
+        project_dir=project,
+        fetch_missing_fx=False,
+    )
+    required_dates = sorted({tx.trade_date.isoformat() for tx in baseline.txs if tx.trade_date.year == 2020})
+    assert required_dates
+
+    for day in required_dates:
+        _set_workbook_fx_daily(project, day, 23.55, "legacy daily")
+
+    blocked = run(project_dir=project, write_workbook=False)
+    assert blocked.app_status.global_status == "blocked"
+
+    summary = workbook_module.adopt_legacy_workbook_fx(project, _workbook_path(project))
+    assert summary["daily"]["adopted"] >= len(required_dates)
+
+    unblocked = run(project_dir=project, write_workbook=False)
+    fx_2020 = next(year for year in unblocked.fx_years.items if year.year == 2020)
+    assert fx_2020.missing_dates == []
+    assert fx_2020.rate_source == "project_state"
+
+
+def test_p3_4_adopt_legacy_workbook_fx_overwrite_rules(tmp_path):
+    """G/H: overwrite=False skips conflicts, overwrite=True replaces."""
+    project = _copy_project_fixture(tmp_path)
+    target_day = "2020-02-03"
+    _set_workbook_fx_yearly(project, 2025, 20.31, "workbook yearly")
+    _set_workbook_fx_daily(project, target_day, 23.45, "workbook daily")
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            fx_yearly={
+                2025: {
+                    "currency_pair": "USD/CZK",
+                    "rate": 26.01,
+                    "source_note": "state yearly",
+                    "manual": True,
+                }
+            },
+            fx_daily={
+                target_day: {
+                    "currency_pair": "USD/CZK",
+                    "rate": 24.01,
+                    "source_note": "state daily",
+                    "manual": True,
+                }
+            },
+        ),
+    )
+
+    summary_skip = workbook_module.adopt_legacy_workbook_fx(
+        project,
+        _workbook_path(project),
+        overwrite=False,
+    )
+    assert summary_skip["yearly"]["skipped_conflicts"] >= 1
+    assert summary_skip["daily"]["skipped_conflicts"] >= 1
+
+    state_skip = project_store.load_project_state(project)
+    assert state_skip.fx_yearly[2025]["rate"] == pytest.approx(26.01)
+    assert state_skip.fx_daily[target_day]["rate"] == pytest.approx(24.01)
+
+    summary_overwrite = workbook_module.adopt_legacy_workbook_fx(
+        project,
+        _workbook_path(project),
+        overwrite=True,
+    )
+    assert summary_overwrite["yearly"]["overwritten"] >= 1
+    assert summary_overwrite["daily"]["overwritten"] >= 1
+
+    state_overwrite = project_store.load_project_state(project)
+    assert state_overwrite.fx_yearly[2025]["rate"] == pytest.approx(20.31)
+    assert state_overwrite.fx_daily[target_day]["rate"] == pytest.approx(23.45)
+
+
+def test_p3_4_adopt_legacy_workbook_fx_skips_invalid_rows_with_counters(tmp_path):
+    """I: invalid FX rows are skipped and counted."""
+    project = _copy_project_fixture(tmp_path)
+    _ensure_test_workbook(project)
+
+    wb = load_workbook(_workbook_path(project))
+    yearly_ws = wb["FX_Yearly"]
+    daily_ws = wb["FX_Daily"]
+
+    y_row = yearly_ws.max_row + 1
+    yearly_ws.cell(row=y_row, column=1, value="bad-year")
+    yearly_ws.cell(row=y_row, column=2, value="nan")
+
+    d_row = daily_ws.max_row + 1
+    daily_ws.cell(row=d_row, column=1, value="bad-date")
+    daily_ws.cell(row=d_row, column=2, value="not-a-rate")
+
+    wb.save(_workbook_path(project))
+
+    summary = workbook_module.adopt_legacy_workbook_fx(project, _workbook_path(project))
+    assert summary["yearly"]["skipped_invalid"] >= 1
+    assert summary["daily"]["skipped_invalid"] >= 1
+
+
+def test_p3_4_project_state_fx_survives_recalc_and_reload(tmp_path):
+    """J: ProjectState FX remains authoritative across repeated runs."""
+    project = _copy_project_fixture(tmp_path)
+    target_day = "2020-02-03"
+    project_store.save_project_state(
+        project,
+        ProjectState(
+            fx_yearly={
+                2025: {
+                    "currency_pair": "USD/CZK",
+                    "rate": 24.12,
+                    "source_note": "persistent yearly",
+                    "manual": True,
+                }
+            },
+            fx_daily={
+                target_day: {
+                    "currency_pair": "USD/CZK",
+                    "rate": 24.13,
+                    "source_note": "persistent daily",
+                    "manual": True,
+                }
+            },
+        ),
+    )
+
+    first = run(project_dir=project, write_workbook=False)
+    second = run(project_dir=project, write_workbook=False)
+
+    y1 = next(year for year in first.fx_years.items if year.year == 2025)
+    y2 = next(year for year in second.fx_years.items if year.year == 2025)
+    assert y1.unified_rate == pytest.approx(24.12)
+    assert y2.unified_rate == pytest.approx(24.12)
+
+    state = project_store.load_project_state(project)
+    assert state.fx_yearly[2025]["rate"] == pytest.approx(24.12)
+    assert state.fx_daily[target_day]["rate"] == pytest.approx(24.13)

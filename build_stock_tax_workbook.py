@@ -923,6 +923,25 @@ def adopt_legacy_workbook_method_selection(
     )
 
 
+def adopt_legacy_workbook_fx(
+    project_dir: Path | str,
+    workbook_path: Path | str,
+    *,
+    overwrite: bool = False,
+) -> Dict[str, Dict[str, int]]:
+    """Explicitly migrate workbook ``FX_Yearly`` and ``FX_Daily`` into ProjectState.
+
+    Normal runtime ignores workbook FX sheets (P3.4).  Operators invoke this
+    helper for one-time migration into ``ProjectState.fx_yearly`` and
+    ``ProjectState.fx_daily``.
+    """
+    return project_store.adopt_legacy_workbook_fx(
+        project_dir,
+        workbook_path,
+        overwrite=overwrite,
+    )
+
+
 def load_filed_reconciliation(user_state: Dict[str, Any]
                               ) -> Dict[int, Dict[str, Any]]:
     """Return {year: {filed_method, filed_tax_base, filed_tax_due}} from Filed_Year_Reconciliation."""
