@@ -20,6 +20,7 @@ from stock_tax_app.backend.main import create_app
 
 REPO_ROOT = Path(__file__).resolve().parent
 LEGACY_NAME = "stock_tax_system.xlsx"
+DEFAULT_EXPORT_REL = Path("exports") / "stock_tax_export.xlsx"
 
 
 def _copy_project(tmp_path: Path) -> Path:
@@ -44,12 +45,19 @@ def test_backend_default_output_path_is_not_legacy_name(tmp_path: Path) -> None:
         "Backend default output_path must not point at the retired "
         f"{LEGACY_NAME}."
     )
+    assert runtime.output_path == (project / DEFAULT_EXPORT_REL).resolve(), (
+        "Backend default output_path must point at exports/stock_tax_export.xlsx."
+    )
     assert not (project / LEGACY_NAME).exists()
+    assert not (project / DEFAULT_EXPORT_REL).exists()
+    assert not (project / "exports").exists()
 
 
 def test_backend_api_runs_without_legacy_workbook(tmp_path: Path) -> None:
     project = _copy_project(tmp_path)
     assert not (project / LEGACY_NAME).exists()
+    assert not (project / DEFAULT_EXPORT_REL).exists()
+    assert not (project / "exports").exists()
 
     app = create_app(project_dir=project, csv_dir=project / ".csv")
     client = TestClient(app)
@@ -60,6 +68,8 @@ def test_backend_api_runs_without_legacy_workbook(tmp_path: Path) -> None:
 
     # API call should not have caused a legacy-named workbook to appear.
     assert not (project / LEGACY_NAME).exists()
+    assert not (project / DEFAULT_EXPORT_REL).exists()
+    assert not (project / "exports").exists()
 
 
 def test_recalculate_does_not_create_legacy_workbook(tmp_path: Path) -> None:
@@ -78,4 +88,10 @@ def test_recalculate_does_not_create_legacy_workbook(tmp_path: Path) -> None:
     runtime = app.state.runtime
     assert not runtime.output_path.exists(), (
         f"Recalculate must not write the export file at {runtime.output_path}."
+    )
+    assert not (project / DEFAULT_EXPORT_REL).exists(), (
+        "POST /api/recalculate must not write exports/stock_tax_export.xlsx."
+    )
+    assert not (project / "exports").exists(), (
+        "POST /api/recalculate must not create the exports directory."
     )

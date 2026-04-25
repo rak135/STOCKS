@@ -31,19 +31,19 @@ Out of scope for this slice (deferred):
 
 | File | Change | Why |
 |------|--------|-----|
-| `stock_tax_app/backend/main.py` | Default `output_path` is now `project / "stock_tax_export.xlsx"` instead of `project / "stock_tax_system.xlsx"`. | The runtime no longer presents a "canonical product workbook" path — its default points at an explicitly-named export file. |
-| `stock_tax_app/engine/core.py` | `engine.run()` falls back to a new `ENGINE_DEFAULT_EXPORT_NAME = "stock_tax_export.xlsx"` instead of `workbook.CANONICAL_OUTPUT_NAME`. | Mirrors the backend default so direct `engine.run()` calls (tests, scripts) do not silently target the legacy product name. |
+| `stock_tax_app/backend/main.py` | Default `output_path` is now `project / "exports" / "stock_tax_export.xlsx"` instead of `project / "stock_tax_system.xlsx"`. | The runtime no longer presents a "canonical product workbook" path — its default points at an explicitly-named export artifact location. |
+| `stock_tax_app/engine/core.py` | `engine.run()` falls back to `project / "exports" / ENGINE_DEFAULT_EXPORT_NAME` (`"stock_tax_export.xlsx"`) instead of `workbook.CANONICAL_OUTPUT_NAME`. | Mirrors the backend default so direct `engine.run()` calls (tests, scripts) do not silently target the legacy product name. |
 | `verify_workbook.py` | The `path` argument is required; there is no implicit default. | The validator can no longer imply that a canonical `stock_tax_system.xlsx` exists at the repo root. |
 | `README_OPERATOR.md` | Banner clarifies this is the legacy/manual workbook export workflow. CLI examples point `--output` at `exports/stock_tax_export.xlsx`. References to "rebuild always targets `stock_tax_system.xlsx`" removed. | Operators must not infer that a root product workbook exists. |
 | `docs/API_CONTRACT.md` | Frontend constraint generalised to "must never parse any Excel workbook" and explicitly notes Excel is a legacy export, not runtime truth. | Document the product decision at the contract layer. |
 | `ui/frontend/README.md` | Same generalisation: frontend must not parse any Excel workbook. | Same. |
-| `docs/api_samples/status.json` | Sample `output_path` updated to `stock_tax_export.xlsx`. | Sample data must match the new default. |
+| `docs/api_samples/status.json` | Sample `output_path` updated to `exports/stock_tax_export.xlsx`. | Sample data must match the new default. |
 
 ## References Changed (Test Fixtures)
 
 | File | Change | Why |
 |------|--------|-----|
-| `test_stock_tax_app_api.py` | `_workbook_path()` now returns `project / "stock_tax_export.xlsx"`; all in-test `project / "stock_tax_system.xlsx"` literals updated to the export name. | Test pre-seed paths must match the runtime default for round-tripping. The literals were always inside `tmp_path` projects — none of these files lived at the repo root. |
+| `test_stock_tax_app_api.py` | `_workbook_path()` now returns `project / "exports" / "stock_tax_export.xlsx"`; all in-test `project / "stock_tax_system.xlsx"` literals updated to the export name. | Test pre-seed paths must match the runtime default for round-tripping. The literals were always inside `tmp_path` projects — none of these files lived at the repo root. |
 | `test_project_state_store.py` | Same update as above. | Same. |
 | `test_stock_tax_app_api.py::test_api_runs_without_root_workbook_and_only_exports_explicitly` | Hardened: now asserts the runtime's `output_path.name != CANONICAL_OUTPUT_NAME`, that no `stock_tax_system.xlsx` is created in the project, and that an explicit `runtime.calculate(write_workbook=True)` writes only to the export path. | Make the no-root invariant a regression test. |
 

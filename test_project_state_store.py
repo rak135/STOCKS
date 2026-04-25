@@ -34,17 +34,19 @@ def _workbook_path(project: Path) -> Path:
     # Tests pre-seed a workbook at the same path the backend runtime
     # uses as its export target. The runtime default is no longer the
     # legacy `stock_tax_system.xlsx` name.
-    return project / "stock_tax_export.xlsx"
+    return project / "exports" / "stock_tax_export.xlsx"
 
 
 def _ensure_test_workbook(project: Path) -> Path:
     workbook_path = _workbook_path(project)
     if workbook_path.exists():
         return workbook_path
+    workbook_path.parent.mkdir(parents=True, exist_ok=True)
 
     calc = workbook_module.calculate_workbook_data(
         inputs=sorted((project / ".csv").glob("*.csv")),
         out_path=workbook_path,
+        project_dir=project,
         fetch_missing_fx=False,
     )
     workbook_module.write_workbook(
@@ -452,7 +454,7 @@ def test_legacy_workbook_fallback_works_and_can_be_adopted(tmp_path):
     assert sale_after.method == "MAX_GAIN"
     assert year_2025.tax_rate == 0.21
 
-    legacy_state = workbook_module.load_existing_user_state(project / "stock_tax_export.xlsx")
+    legacy_state = workbook_module.load_existing_user_state(_workbook_path(project))
     adopted = project_store.adopt_legacy_workbook_state(project, legacy_state)
     assert project_store.state_path_for(project).exists()
     assert adopted.year_settings[2025]["tax_rate"] == 0.21
@@ -504,7 +506,8 @@ def test_project_state_daily_fx_beats_workbook_fallback(tmp_path):
 
     calc = workbook_module.calculate_workbook_data(
         inputs=sorted((project / ".csv").glob("*.csv")),
-        out_path=project / "stock_tax_export.xlsx",
+        out_path=_workbook_path(project),
+        project_dir=project,
         fetch_missing_fx=False,
     )
 
@@ -541,7 +544,7 @@ def test_explicit_legacy_adoption_migrates_fx_without_overwriting_existing_entri
         ),
     )
 
-    legacy_state = workbook_module.load_existing_user_state(project / "stock_tax_export.xlsx")
+    legacy_state = workbook_module.load_existing_user_state(_workbook_path(project))
     adopted = project_store.adopt_legacy_workbook_state(project, legacy_state)
     reloaded = project_store.load_project_state(project)
 
@@ -585,7 +588,8 @@ def test_project_state_instrument_map_beats_workbook_fallback(tmp_path):
 
     calc = workbook_module.calculate_workbook_data(
         inputs=sorted((project / ".csv").glob("*.csv")),
-        out_path=project / "stock_tax_export.xlsx",
+        out_path=_workbook_path(project),
+        project_dir=project,
         fetch_missing_fx=False,
     )
     assert calc.instrument_map[symbol]["Instrument_ID"] == "SHOP_STATE"
@@ -616,7 +620,8 @@ def test_default_generated_instrument_map_still_works(tmp_path):
 
     calc = workbook_module.calculate_workbook_data(
         inputs=sorted((project / ".csv").glob("*.csv")),
-        out_path=project / "stock_tax_export.xlsx",
+        out_path=_workbook_path(project),
+        project_dir=project,
         fetch_missing_fx=False,
     )
 
@@ -652,7 +657,7 @@ def test_explicit_legacy_adoption_migrates_instrument_map_without_overwriting_by
         ),
     )
 
-    legacy_state = workbook_module.load_existing_user_state(project / "stock_tax_export.xlsx")
+    legacy_state = workbook_module.load_existing_user_state(_workbook_path(project))
     adopted = project_store.adopt_legacy_workbook_state(project, legacy_state)
     assert copied_symbol in adopted.instrument_map
     assert adopted.instrument_map[copied_symbol]["instrument_id"] == copied_symbol
@@ -696,7 +701,7 @@ def test_workbook_export_reflects_project_state_for_migrated_domains(tmp_path):
     assert settings_row is not None
     assert method_row is not None
 
-    wb = load_workbook(project / "stock_tax_export.xlsx")
+    wb = load_workbook(_workbook_path(project))
     assert wb["Settings"].cell(row=settings_row, column=2).value == 0.2
     assert wb["Method_Selection"].cell(row=method_row, column=3).value == "FIFO"
 
@@ -734,7 +739,7 @@ def test_workbook_export_reflects_project_state_instrument_map(tmp_path):
     row = _find_instrument_map_row(project, symbol)
     assert row is not None
 
-    wb = load_workbook(project / "stock_tax_export.xlsx")
+    wb = load_workbook(_workbook_path(project))
     ws = wb["Instrument_Map"]
     assert ws.cell(row=row, column=2).value == "SHOP_STATE"
     assert ws.cell(row=row, column=3).value == "STATE000SHOP"
@@ -778,7 +783,8 @@ def test_project_state_corporate_actions_beat_workbook_fallback(tmp_path):
 
     calc = workbook_module.calculate_workbook_data(
         inputs=sorted((project / ".csv").glob("*.csv")),
-        out_path=project / "stock_tax_export.xlsx",
+        out_path=_workbook_path(project),
+        project_dir=project,
         fetch_missing_fx=False,
     )
     assert calc.corporate_actions
@@ -805,7 +811,8 @@ def test_workbook_corporate_action_fallback_still_works_without_project_state(tm
 
     calc = workbook_module.calculate_workbook_data(
         inputs=sorted((project / ".csv").glob("*.csv")),
-        out_path=project / "stock_tax_export.xlsx",
+        out_path=_workbook_path(project),
+        project_dir=project,
         fetch_missing_fx=False,
     )
     assert any(
@@ -850,7 +857,7 @@ def test_explicit_legacy_adoption_migrates_corporate_actions_without_overwriting
         ),
     )
 
-    legacy_state = workbook_module.load_existing_user_state(project / "stock_tax_export.xlsx")
+    legacy_state = workbook_module.load_existing_user_state(_workbook_path(project))
     adopted = project_store.adopt_legacy_workbook_state(project, legacy_state)
     assert any(action.get("action_id") == "state-keep" for action in adopted.corporate_actions)
     assert any(action.get("note") == "legacy ca" for action in adopted.corporate_actions)

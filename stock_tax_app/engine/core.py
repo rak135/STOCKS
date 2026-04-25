@@ -57,6 +57,7 @@ POSITION_RECONCILIATION_TOLERANCE_DEFAULT = 1e-4
 POSITION_RECONCILIATION_WARN_TOLERANCE_DEFAULT = 1e-2
 
 ENGINE_DEFAULT_EXPORT_NAME = "stock_tax_export.xlsx"
+ENGINE_DEFAULT_EXPORT_DIR = "exports"
 
 
 def _resolve_path(project_dir: Path, value: Path | str | None, default_name: str) -> Path:
@@ -1266,7 +1267,10 @@ def run(
 ) -> EngineResult:
     project_path = Path(project_dir).resolve()
     csv_path = _resolve_path(project_path, csv_dir, ".csv")
-    output = _resolve_path(project_path, output_path, ENGINE_DEFAULT_EXPORT_NAME)
+    if output_path is None:
+        output = (project_path / ENGINE_DEFAULT_EXPORT_DIR / ENGINE_DEFAULT_EXPORT_NAME).resolve()
+    else:
+        output = _resolve_path(project_path, output_path, ENGINE_DEFAULT_EXPORT_NAME)
 
     inputs = _discover_csv_inputs(csv_path)
     calc = workbook.calculate_workbook_data(
